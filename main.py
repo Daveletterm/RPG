@@ -196,10 +196,13 @@ def clamp_player_position(x: int, y: int) -> tuple[int, int]:
     return max(0, min(MAP_WIDTH - 1, x)), max(0, min(MAP_HEIGHT - 1, y))
 
 
-def save_game_state(path: Path, player: "Player", party: List[Monster]) -> None:
+def save_game_state(
+    path: Path, player: "Player", party: List[Monster], storage: List[Monster]
+) -> None:
     data = {
         "player": {"x": player.tile_x, "y": player.tile_y},
         "party": [monster_to_dict(monster) for monster in party[:MAX_PARTY_SIZE]],
+        "storage": [monster_to_dict(monster) for monster in storage],
     }
     path.write_text(json.dumps(data, indent=2))
 
@@ -209,7 +212,7 @@ def load_game_state(
     templates: Dict[str, Monster],
     default_party: List[Monster],
     default_position: tuple[int, int],
-) -> tuple[tuple[int, int], List[Monster]]:
+) -> tuple[tuple[int, int], List[Monster], List[Monster]]:
     if not path.exists():
         return default_position, list(default_party)
 
@@ -232,7 +235,13 @@ def load_game_state(
     if not loaded_party:
         loaded_party = list(default_party)
 
-    return player_position, loaded_party
+    loaded_storage: List[Monster] = []
+    for entry in data.get("storage", []):
+        monster = monster_from_dict(entry, templates)
+        if monster:
+            loaded_storage.append(monster)
+
+    return player_position, loaded_party, loaded_storage
 
 
 # ----------------------------------------------------------------------------
@@ -290,24 +299,59 @@ class Player:
 class BattleState:
     def __init__(
         self,
-        player_monster: Monster,
+        player_party: List[Monster],
         enemy_monster: Monster,
-        party_size: int,
         max_party_size: int,
     ):
-        self.player_monster = player_monster
+        if not player_party:
+            raise ValueError("Player party cannot be empty when a battle begins.")
+        if all(monster.is_fainted() for monster in player_party):
+            raise ValueError("All party monsters have fainted and cannot battle.")
+
+        self.player_party = player_party
         self.enemy_monster = enemy_monster
-        self.menu_state = "action"  # "action" or "move"
+        self.max_party_size = max_party_size
+
+        self.active_index = next(
+            (idx for idx, monster in enumerate(self.player_party) if not monster.is_fainted()),
+            0,
+        )
+        self.player_monster = self.player_party[self.active_index]
+        self.switch_index = self.active_index
+        self.force_switch = False
+
+        self.menu_state = "action"  # "action", "move", or "switch"
         self.action_index = 0
         self.move_index = 0
         self.message_queue: List[Dict[str, Optional[Callable[[], None]]]] = []
         self.pending_enemy_turn = False
         self.after_battle_callback: Optional[Callable[[], None]] = None
         self.ended = False
-        self.party_size = party_size
-        self.max_party_size = max_party_size
-        self.action_options: List[str] = ["Fight", "Catch", "Run"]
+        self.action_options: List[str] = ["Fight", "Switch", "Catch", "Run"]
         self.captured_monster: Optional[Monster] = None
+        self.captured_to_storage = False
+
+    @property
+    def party_size(self) -> int:
+        return len(self.player_party)
+
+    def available_switch_targets(self) -> List[int]:
+        return [
+            idx
+            for idx, monster in enumerate(self.player_party)
+            if idx != self.active_index and not monster.is_fainted()
+        ]
+
+    def set_active_monster(self, index: int) -> None:
+        self.active_index = index
+        self.player_monster = self.player_party[index]
+        self.switch_index = index
+
+    def first_available_switch(self) -> Optional[int]:
+        for idx, monster in enumerate(self.player_party):
+            if idx != self.active_index and not monster.is_fainted():
+                return idx
+        return None
 
     def queue_message(self, text: str, callback: Optional[Callable[[], None]] = None) -> None:
         self.message_queue.append({"text": text, "callback": callback})
@@ -359,18 +403,15 @@ def calculate_exp_gain(defeated: Monster) -> int:
 
 
 def start_battle(
-    player_monster: Monster,
+    player_party: List[Monster],
     wild_monsters: List[Monster],
-    party_size: int,
     max_party_size: int,
 ) -> BattleState:
     enemy_template = random.choice(wild_monsters)
     enemy = clone_monster(enemy_template)
-    player_mon = clone_monster(player_monster)
     return BattleState(
-        player_monster=player_mon,
+        player_party=player_party,
         enemy_monster=enemy,
-        party_size=party_size,
         max_party_size=max_party_size,
     )
 
@@ -447,7 +488,9 @@ def draw_battle(screen: pygame.Surface, battle: BattleState, font: pygame.font.F
             prefix = "> " if idx == battle.action_index else "  "
             label = option
             if option == "Catch" and battle.party_size >= battle.max_party_size:
-                label = f"{option} (Party Full)"
+                label = f"{option} (Send to storage)"
+            if option == "Switch" and not battle.available_switch_targets():
+                label = f"{option} (Unavailable)"
             draw_text(
                 screen,
                 prefix + label,
@@ -459,14 +502,35 @@ def draw_battle(screen: pygame.Surface, battle: BattleState, font: pygame.font.F
             prefix = "> " if idx == battle.move_index else "  "
             text = f"{prefix}{move.name} ({int(move.accuracy * 100)}% accuracy)"
             draw_text(screen, text, (menu_rect.x + 12, menu_rect.y + 12 + idx * 24), small_font)
+    elif battle.menu_state == "switch":
+        draw_text(
+            screen,
+            "Choose a monster to send out.",
+            (menu_rect.x + 12, menu_rect.y + 12),
+            small_font,
+        )
+        for idx, monster in enumerate(battle.player_party):
+            prefix = "> " if idx == battle.switch_index else "  "
+            status = "Fainted" if monster.is_fainted() else f"HP {monster.current_hp}/{monster.max_hp}"
+            active_note = " (Active)" if idx == battle.active_index else ""
+            line = f"{prefix}{monster.name} Lv{monster.level} - {status}{active_note}"
+            draw_text(
+                screen,
+                line,
+                (menu_rect.x + 12, menu_rect.y + 36 + idx * 22),
+                small_font,
+            )
 
 
 def draw_party_menu(
     screen: pygame.Surface,
     party: List[Monster],
+    storage: List[Monster],
     font: pygame.font.Font,
     small_font: pygame.font.Font,
-    selected_index: int,
+    party_index: int,
+    storage_index: int,
+    view: str,
 ) -> None:
     overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 160))
@@ -476,40 +540,72 @@ def draw_party_menu(
     pygame.draw.rect(screen, (245, 245, 245), panel_rect)
     pygame.draw.rect(screen, (0, 0, 0), panel_rect, 2)
 
-    draw_text(screen, "Party Status", (panel_rect.x + 20, panel_rect.y + 16), font)
+    title = "Party Status" if view == "party" else "Storage"
+    draw_text(screen, title, (panel_rect.x + 20, panel_rect.y + 16), font)
     draw_text(
         screen,
-        "UP/DOWN to inspect · TAB/P to close · S to save",
+        "UP/DOWN to inspect · LEFT/RIGHT to change view · TAB/P to close · S to save",
         (panel_rect.x + 20, panel_rect.y + 46),
         small_font,
     )
 
-    list_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 80, 260, panel_rect.height - 100)
+    list_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 80, 280, panel_rect.height - 100)
     detail_x = list_rect.right + 30
-    for idx in range(MAX_PARTY_SIZE):
-        if idx < len(party):
-            monster = party[idx]
-            prefix = ">" if idx == selected_index else " "
-            draw_text(
-                screen,
-                f"{prefix} Slot {idx + 1}: {monster.name} Lv{monster.level}",
-                (list_rect.x, list_rect.y + idx * 28),
-                font,
-            )
-        else:
-            draw_text(
-                screen,
-                f"  Slot {idx + 1}: --- Empty ---",
-                (list_rect.x, list_rect.y + idx * 28),
-                font,
-            )
 
-    if not party:
-        draw_text(screen, "Your party is empty!", (detail_x, list_rect.y), font)
+    if view == "party":
+        for idx in range(MAX_PARTY_SIZE):
+            if idx < len(party):
+                monster = party[idx]
+                prefix = ">" if idx == party_index else " "
+                status = "FNT" if monster.is_fainted() else f"HP {monster.current_hp}/{monster.max_hp}"
+                draw_text(
+                    screen,
+                    f"{prefix} Slot {idx + 1}: {monster.name} Lv{monster.level} ({status})",
+                    (list_rect.x, list_rect.y + idx * 28),
+                    font,
+                )
+            else:
+                draw_text(
+                    screen,
+                    f"  Slot {idx + 1}: --- Empty ---",
+                    (list_rect.x, list_rect.y + idx * 28),
+                    font,
+                )
+
+        if not party:
+            draw_text(screen, "Your party is empty!", (detail_x, list_rect.y), font)
+            return
+
+        party_index = max(0, min(party_index, len(party) - 1))
+        selected = party[party_index]
+    else:
+        total_storage = len(storage)
+        if total_storage == 0:
+            draw_text(screen, "Storage is empty.", (list_rect.x, list_rect.y), font)
+            selected = None
+        else:
+            storage_index = max(0, min(storage_index, total_storage - 1))
+            visible_rows = 8
+            top_index = 0
+            if total_storage > visible_rows:
+                top_index = max(0, min(storage_index - visible_rows // 2, total_storage - visible_rows))
+            for row in range(visible_rows):
+                actual_index = top_index + row
+                if actual_index >= total_storage:
+                    break
+                monster = storage[actual_index]
+                prefix = ">" if actual_index == storage_index else " "
+                draw_text(
+                    screen,
+                    f"{prefix} Crate {actual_index + 1}: {monster.name} Lv{monster.level}",
+                    (list_rect.x, list_rect.y + row * 28),
+                    font,
+                )
+            selected = storage[storage_index]
+
+    if not selected:
         return
 
-    selected_index = max(0, min(selected_index, len(party) - 1))
-    selected = party[selected_index]
     stats_y = list_rect.y
     draw_text(screen, f"Name: {selected.name}", (detail_x, stats_y), font)
     draw_text(screen, f"Type: {selected.type}", (detail_x, stats_y + 26), font)
@@ -566,6 +662,18 @@ def handle_battle_input(event: pygame.event.Event, battle: BattleState) -> None:
     if event.type != pygame.KEYDOWN:
         return
 
+    if battle.force_switch:
+        if not battle.available_switch_targets():
+            battle.force_switch = False
+            battle.queue_message("All of your monsters have fainted!")
+            battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+            return
+        if battle.menu_state != "switch":
+            first_option = battle.first_available_switch()
+            if first_option is not None:
+                battle.switch_index = first_option
+            battle.menu_state = "switch"
+
     if battle.menu_state == "action":
         if event.key in (pygame.K_UP, pygame.K_DOWN):
             option_count = len(battle.action_options)
@@ -577,6 +685,14 @@ def handle_battle_input(event: pygame.event.Event, battle: BattleState) -> None:
             if selected_option == "Fight":
                 battle.menu_state = "move"
                 battle.move_index = 0
+            elif selected_option == "Switch":
+                targets = battle.available_switch_targets()
+                if not targets:
+                    battle.queue_message("No other monsters can fight!")
+                else:
+                    if battle.switch_index not in targets:
+                        battle.switch_index = targets[0]
+                    battle.menu_state = "switch"
             elif selected_option == "Catch":
                 attempt_capture(battle)
             else:
@@ -592,6 +708,36 @@ def handle_battle_input(event: pygame.event.Event, battle: BattleState) -> None:
         elif event.key in (pygame.K_RETURN, pygame.K_z, pygame.K_SPACE):
             selected_move = battle.player_monster.moves[battle.move_index]
             execute_player_turn(battle, selected_move)
+    elif battle.menu_state == "switch":
+        party_len = battle.party_size
+        if party_len == 0:
+            return
+        if event.key == pygame.K_UP:
+            battle.switch_index = (battle.switch_index - 1) % party_len
+        elif event.key == pygame.K_DOWN:
+            battle.switch_index = (battle.switch_index + 1) % party_len
+        elif event.key == pygame.K_ESCAPE:
+            if not battle.force_switch:
+                battle.menu_state = "action"
+        elif event.key in (pygame.K_RETURN, pygame.K_z, pygame.K_SPACE):
+            if battle.switch_index == battle.active_index:
+                battle.queue_message("That monster is already in battle!")
+                return
+            chosen = battle.player_party[battle.switch_index]
+            if chosen.is_fainted():
+                battle.queue_message(f"{chosen.name} can't fight!")
+                return
+            perform_player_switch(battle, battle.switch_index, costs_turn=not battle.force_switch)
+
+
+def perform_player_switch(battle: BattleState, new_index: int, costs_turn: bool) -> None:
+    battle.set_active_monster(new_index)
+    battle.force_switch = False
+    battle.menu_state = "action"
+    battle.action_index = 0
+    battle.move_index = 0
+    battle.pending_enemy_turn = costs_turn
+    battle.queue_message(f"Go {battle.player_monster.name}!")
 
 
 def execute_player_turn(battle: BattleState, move: Move) -> None:
@@ -638,32 +784,38 @@ def execute_enemy_turn(battle: BattleState) -> None:
         battle.queue_message(f"Wild {attacker.name} used {move.name}!")
         battle.queue_message(f"It dealt {damage} damage!")
         if defender.is_fainted():
-            battle.queue_message(f"{defender.name} fainted!")
-            battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+            def handle_faint() -> None:
+                next_option = battle.first_available_switch()
+                if next_option is not None:
+                    battle.force_switch = True
+                    battle.menu_state = "switch"
+                    battle.switch_index = next_option
+                else:
+                    battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+
+            battle.queue_message(f"{defender.name} fainted!", callback=handle_faint)
 
 
 def attempt_capture(battle: BattleState) -> None:
     battle.queue_message("You threw a capture charm!")
 
-    if battle.party_size >= battle.max_party_size:
-        battle.queue_message("Your party is full! Swap someone out first.")
+    enemy = battle.enemy_monster
+    hp_ratio = enemy.current_hp / enemy.max_hp if enemy.max_hp else 1.0
+    catch_chance = 0.3 + (1.0 - hp_ratio) * 0.5
+    if random.random() <= catch_chance:
+
+        def finish_capture() -> None:
+            battle.captured_monster = clone_monster(enemy)
+            battle.captured_to_storage = battle.party_size >= battle.max_party_size
+            if battle.captured_to_storage:
+                battle.queue_message(f"{enemy.name} will be sent to storage.")
+            battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+
+        battle.queue_message(f"You caught {enemy.name}!", callback=finish_capture)
         battle.pending_enemy_turn = False
     else:
-        enemy = battle.enemy_monster
-        hp_ratio = enemy.current_hp / enemy.max_hp if enemy.max_hp else 1.0
-        catch_chance = 0.3 + (1.0 - hp_ratio) * 0.5
-        if random.random() <= catch_chance:
-
-            def finish_capture() -> None:
-                battle.captured_monster = clone_monster(enemy)
-                battle.party_size = min(battle.max_party_size, battle.party_size + 1)
-                battle.after_battle_callback = lambda: setattr(battle, "ended", True)
-
-            battle.queue_message(f"You caught {enemy.name}!", callback=finish_capture)
-            battle.pending_enemy_turn = False
-        else:
-            battle.queue_message(f"{enemy.name} broke free!")
-            battle.pending_enemy_turn = True
+        battle.queue_message(f"{enemy.name} broke free!")
+        battle.pending_enemy_turn = True
 
     battle.menu_state = "action"
     battle.action_index = 0
@@ -696,10 +848,11 @@ def main() -> None:
     default_party = [clone_monster(monster) for monster in template_list[:3]]
     if not default_party:
         raise ValueError("No monsters defined in monsters.json. Add at least one monster entry.")
-    player_position, player_party = load_game_state(
+    player_position, player_party, player_storage = load_game_state(
         SAVE_FILE, monster_templates, default_party, DEFAULT_START_POSITION
     )
     player_party = player_party[:MAX_PARTY_SIZE]
+    player_storage = list(player_storage)
     if not player_party:
         raise ValueError("Unable to load a valid party from monsters.json or save data.")
     wild_pool = template_list
@@ -710,26 +863,30 @@ def main() -> None:
     overworld_message: Optional[str] = None
     overworld_message_timer = 0
     party_selection = 0
+    storage_selection = 0
+    party_menu_view = "party"
 
     def end_battle() -> None:
-        nonlocal game_mode, active_battle, overworld_message, overworld_message_timer
+        nonlocal game_mode, active_battle, overworld_message, overworld_message_timer, player_storage
         if not active_battle:
             return
-        if active_battle.player_monster.is_fainted():
-            # Simple healing logic for prototype
+        if all(monster.is_fainted() for monster in player_party):
             for monster in player_party:
                 monster.heal()
-        else:
-            player_party[0] = active_battle.player_monster
+            overworld_message = "Your party was revived after the battle!"
+            overworld_message_timer = 240
 
         if active_battle.captured_monster:
-            if len(player_party) < MAX_PARTY_SIZE:
-                player_party.append(active_battle.captured_monster)
-                overworld_message = f"{active_battle.captured_monster.name} joined your party!"
+            captured = active_battle.captured_monster
+            if active_battle.captured_to_storage:
+                player_storage.append(captured)
+                overworld_message = f"{captured.name} was sent to storage!"
+            elif len(player_party) < MAX_PARTY_SIZE:
+                player_party.append(captured)
+                overworld_message = f"{captured.name} joined your party!"
             else:
-                overworld_message = (
-                    f"No room for {active_battle.captured_monster.name}. It returned to the wild."
-                )
+                player_storage.append(captured)
+                overworld_message = f"{captured.name} was sent to storage!"
             overworld_message_timer = 240
         game_mode = "overworld"
         active_battle = None
@@ -741,7 +898,7 @@ def main() -> None:
                 running = False
             elif game_mode == "overworld" and event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_s:
-                    save_game_state(SAVE_FILE, player, player_party)
+                    save_game_state(SAVE_FILE, player, player_party, player_storage)
                     overworld_message = "Game saved!"
                     overworld_message_timer = 180
                     continue
@@ -752,6 +909,7 @@ def main() -> None:
                     else:
                         party_selection = 0
                     game_mode = "party_menu"
+                    party_menu_view = "party"
                     continue
 
                 dx, dy = 0, 0
@@ -779,7 +937,9 @@ def main() -> None:
                         if tile_symbol == "G" and encounter_chance():
                             game_mode = "battle"
                             active_battle = start_battle(
-                                player_party[0], wild_pool, len(player_party), MAX_PARTY_SIZE
+                                player_party,
+                                wild_pool,
+                                MAX_PARTY_SIZE,
                             )
                             overworld_message = None
 
@@ -789,13 +949,21 @@ def main() -> None:
                 if event.key in (pygame.K_ESCAPE, pygame.K_p, pygame.K_TAB):
                     game_mode = "overworld"
                 elif event.key == pygame.K_s:
-                    save_game_state(SAVE_FILE, player, player_party)
+                    save_game_state(SAVE_FILE, player, player_party, player_storage)
                     overworld_message = "Game saved!"
                     overworld_message_timer = 180
-                elif event.key == pygame.K_UP and player_party:
-                    party_selection = (party_selection - 1) % len(player_party)
-                elif event.key == pygame.K_DOWN and player_party:
-                    party_selection = (party_selection + 1) % len(player_party)
+                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    party_menu_view = "storage" if party_menu_view == "party" else "party"
+                elif event.key == pygame.K_UP:
+                    if party_menu_view == "party" and player_party:
+                        party_selection = (party_selection - 1) % len(player_party)
+                    elif party_menu_view == "storage" and player_storage:
+                        storage_selection = (storage_selection - 1) % len(player_storage)
+                elif event.key == pygame.K_DOWN:
+                    if party_menu_view == "party" and player_party:
+                        party_selection = (party_selection + 1) % len(player_party)
+                    elif party_menu_view == "storage" and player_storage:
+                        storage_selection = (storage_selection + 1) % len(player_storage)
 
         screen.fill((0, 0, 0))
 
@@ -807,7 +975,16 @@ def main() -> None:
                 end_battle()
         elif game_mode == "party_menu":
             draw_overworld(screen, player, font, overworld_message)
-            draw_party_menu(screen, player_party, font, small_font, party_selection)
+            draw_party_menu(
+                screen,
+                player_party,
+                player_storage,
+                font,
+                small_font,
+                party_selection,
+                storage_selection,
+                party_menu_view,
+            )
 
         if overworld_message_timer > 0:
             overworld_message_timer -= 1

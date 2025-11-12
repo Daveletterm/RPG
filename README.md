@@ -21,13 +21,14 @@ arrow keys to walk around; step into grass tiles to find battles.
 ### Overworld
 
 * **Arrow keys** – move the player
-* **Tab / P** – open the party status menu overlay
+* **Tab / P** – open the party menu overlay
 * **S** – write your current location and party to `savegame.json`
 * **Esc** – close the game window
 
 Visit the light-green healing floor inside the small house to fully restore your
 party. While in the party menu, use **Up/Down** to highlight a monster and read
-its stats and moves. Press **Tab** or **P** again to return to the overworld.
+its stats and moves. Tap **Left/Right** to switch between the active party and
+your long-term storage. Press **Tab** or **P** again to return to the overworld.
 You can inspect up to six party slots at once; empty slots are shown so you can
 plan future captures. Press **S** in this view to save without leaving the menu.
 
@@ -37,17 +38,19 @@ plan future captures. Press **S** in this view to save without leaving the menu.
 * **Enter / Space / Z** – confirm selections
 * **Esc** – back out of the move list
 
-Choose **Fight** to select a move, **Catch** to try recruiting the foe, or
-**Run** to attempt an escape. The currently selected party leader takes part in
-combat. Catch chances improve as the wild monster's HP drops. Captured monsters
-join your party automatically if a slot is free.
+Choose **Fight** to select a move, **Switch** to tag in another party member
+(costs a turn), **Catch** to try recruiting the foe, or **Run** to attempt an
+escape. The currently selected party leader takes part in combat. Catch chances
+improve as the wild monster's HP drops. Captured monsters join your party
+automatically when a slot is free; if your party is full they are safely routed
+to storage.
 
 ## Saving and continuing
 
 The game automatically looks for `savegame.json` next to `main.py` when it
-starts. If present, the file restores your previous location and party (up to
-six monsters). Use the **S** shortcut from the overworld or party menu to update
-the save file at any time.
+starts. If present, the file restores your previous location, party (up to six
+monsters), and any additional monsters you've stored. Use the **S** shortcut
+from the overworld or party menu to update the save file at any time.
 
 ## Project structure
 
