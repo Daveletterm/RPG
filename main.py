@@ -1,13 +1,15 @@
-"""Mythic Bond web backend.
+"""Mythic Bond prototype RPG toolkit.
 
-Install dependencies: pip install -r requirements.txt
-Run the web app with: flask --app rpg_app.py run
+This module provides the data models and battle logic used by the Mythic Bond
+creature-collecting demo.  Run ``python main.py`` to launch an interactive
+command-line prototype, or import the module to build custom front-ends.
 """
 
 from __future__ import annotations
 
 import json
 import random
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -1082,6 +1084,217 @@ def load_game(
     return GameState.from_dict(data, move_library, monster_templates)
 
 
+def _format_monster_summary(monster: Monster) -> str:
+    hp = f"{monster.current_hp}/{monster.max_hp}"
+    return f"{monster.name} (Lv. {monster.level}) – HP {hp}"
+
+
+def _print_party(state: GameState) -> None:
+    print("Your party:")
+    for idx, monster in enumerate(state.party, start=1):
+        leader = " (active)" if idx == 1 else ""
+        print(f"  {idx}. {_format_monster_summary(monster)}{leader}")
+
+
+def _print_battle_status(battle: BattleState) -> None:
+    print("Player monster:")
+    print(f"  {_format_monster_summary(battle.player_monster)}")
+    print("Opponent:")
+    print(f"  {_format_monster_summary(battle.enemy_monster)}")
+
+
+def _print_moves(monster: Monster) -> None:
+    print(f"Moves for {monster.name}:")
+    for idx, move in enumerate(monster.moves, start=1):
+        extra = f" – {move.category}"
+        if move.power:
+            extra += f", Power {move.power}"
+        extra += f", Accuracy {int(move.accuracy * 100)}%"
+        print(f"  {idx}. {move.name}{extra}")
+
+
+def _flush_battle_log(battle: BattleState, start_index: int = 0) -> int:
+    for entry in battle.log[start_index:]:
+        print(f"  {entry}")
+    return len(battle.log)
+
+
+def _describe_location(state: GameState) -> str:
+    tile_symbol = tile_at(state.player_x, state.player_y)
+    tile_info = TILE_TYPES.get(tile_symbol, {"name": "Unknown"})
+    return f"({state.player_x}, {state.player_y}) – {tile_info['name']}"
+
+
+def run_cli() -> None:
+    """Launch a lightweight command-line interface for the RPG prototype."""
+
+    move_library = create_move_library()
+    monster_templates = create_monster_templates(move_library)
+    state = new_game_state(move_library, monster_templates)
+    battle_log_index = 0
+
+    print(
+        textwrap.dedent(
+            """
+            Welcome to Mythic Bond!
+            ----------------------
+            Explore the overworld with NORTH, SOUTH, EAST, or WEST.  Type HELP to
+            see available commands.  Save with SAVE, and quit anytime with QUIT.
+            """
+        ).strip()
+    )
+    print(f"You begin at {_describe_location(state)}.")
+
+    while True:
+        in_battle = state.battle is not None and not state.battle.ended
+
+        if state.battle:
+            battle_log_index = _flush_battle_log(state.battle, battle_log_index)
+            if state.battle.ended:
+                finalize_battle(state)
+                battle_log_index = 0
+                if state.overworld_message:
+                    print(state.overworld_message)
+                    state.overworld_message = None
+                continue
+
+        if state.overworld_message:
+            print(state.overworld_message)
+            state.overworld_message = None
+
+        try:
+            command = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nThanks for playing Mythic Bond!")
+            break
+
+        if not command:
+            continue
+
+        lowered = command.lower()
+
+        if lowered in {"quit", "exit"}:
+            print("Thanks for playing Mythic Bond!")
+            break
+
+        if lowered == "help":
+            if in_battle:
+                print(
+                    textwrap.dedent(
+                        """
+                        Battle commands:
+                          MOVES            – list your available moves
+                          ATTACK <n>       – use move number n (alias: A <n>)
+                          STATUS           – view HP for both monsters
+                          ENEMY            – inspect the opposing monster
+                          LOG              – reprint the battle log
+                          RUN              – attempt to escape the fight
+                        """
+                    ).strip()
+                )
+            else:
+                print(
+                    textwrap.dedent(
+                        """
+                        Exploration commands:
+                          NORTH/SOUTH/EAST/WEST – move around the map
+                          WHERE                  – show your current tile
+                          STATUS                 – list your party
+                          HISTORY                – review recent encounters
+                          SAVE                   – write a save file to saves/savegame.json
+                          LOAD                   – restore from the save file
+                          HELP                   – show this message again
+                          QUIT                   – leave the demo
+                        """
+                    ).strip()
+                )
+            continue
+
+        if in_battle:
+            battle = state.battle  # mypy: battle not None when in_battle
+            assert battle is not None  # for type checkers
+            if lowered in {"status", "party"}:
+                _print_battle_status(battle)
+                continue
+            if lowered in {"enemy", "inspect"}:
+                print(f"Enemy details: {_format_monster_summary(battle.enemy_monster)}")
+                continue
+            if lowered in {"moves", "move"}:
+                _print_moves(battle.player_monster)
+                continue
+            if lowered in {"log", "history"}:
+                battle_log_index = _flush_battle_log(battle, 0)
+                continue
+            if lowered in {"run", "escape"}:
+                battle_log_index = _flush_battle_log(battle, len(battle.log))
+                battle_attempt_escape(battle)
+                battle_log_index = _flush_battle_log(battle, battle_log_index)
+                continue
+
+            if lowered.startswith("attack") or lowered.startswith("a "):
+                parts = lowered.split()
+                if len(parts) < 2:
+                    _print_moves(battle.player_monster)
+                    continue
+                try:
+                    move_index = int(parts[1]) - 1
+                except ValueError:
+                    print("Please provide a valid move number, e.g. ATTACK 1.")
+                    continue
+                battle_choose_fight(battle)
+                before = len(battle.log)
+                battle_use_move(battle, move_index)
+                battle_log_index = _flush_battle_log(battle, before)
+                continue
+
+            print("Unknown battle command. Type HELP for options.")
+            continue
+
+        if lowered in {"north", "n"}:
+            move_player(state, 0, -1, monster_templates)
+        elif lowered in {"south", "s"}:
+            move_player(state, 0, 1, monster_templates)
+        elif lowered in {"west", "w"}:
+            move_player(state, -1, 0, monster_templates)
+        elif lowered in {"east", "e"}:
+            move_player(state, 1, 0, monster_templates)
+        elif lowered.startswith("move "):
+            direction = lowered.split(maxsplit=1)[1]
+            direction_map = {"north": (0, -1), "south": (0, 1), "west": (-1, 0), "east": (1, 0)}
+            if direction not in direction_map:
+                print("Unknown direction. Use NORTH, SOUTH, EAST, or WEST.")
+                continue
+            dx, dy = direction_map[direction]
+            move_player(state, dx, dy, monster_templates)
+        elif lowered in {"status", "party"}:
+            _print_party(state)
+        elif lowered in {"where", "location"}:
+            print(f"Current position: {_describe_location(state)}")
+        elif lowered in {"history", "log"}:
+            if not state.encounter_log:
+                print("No encounters yet.")
+            else:
+                print("Recent encounters:")
+                for entry in state.encounter_log[-10:]:
+                    print(f"  {entry}")
+        elif lowered == "save":
+            try:
+                save_game(state)
+                print(f"Game saved to {SAVE_PATH}.")
+            except RuntimeError as exc:
+                print(str(exc))
+        elif lowered == "load":
+            try:
+                state = load_game(move_library, monster_templates)
+                battle_log_index = 0
+                print("Save data loaded.")
+                print(f"Current position: {_describe_location(state)}")
+            except FileNotFoundError:
+                print("No save file found. Use SAVE first.")
+        else:
+            print("Unknown command. Type HELP to see available options.")
+
+
 __all__ = [
     "Move",
     "Monster",
@@ -1106,4 +1319,9 @@ __all__ = [
     "battle_from_dict",
     "monster_to_dict",
     "monster_from_dict",
+    "run_cli",
 ]
+
+
+if __name__ == "__main__":
+    run_cli()
