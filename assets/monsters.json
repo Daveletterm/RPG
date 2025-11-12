@@ -1,0 +1,87 @@
+{
+  "monsters": [
+    {
+      "name": "Spraygit",
+      "level": 5,
+      "max_hp": 34,
+      "attack": 11,
+      "defense": 9,
+      "speed": 11,
+      "type": "aqua",
+      "moves": ["Ripple Shot", "Nuzzle"],
+      "sprites": {
+        "front": "spraygit_front.png",
+        "back": "spraygit_back.png"
+      }
+    },
+    {
+      "name": "Lokain",
+      "level": 5,
+      "max_hp": 28,
+      "attack": 14,
+      "defense": 8,
+      "speed": 13,
+      "type": "ember",
+      "moves": ["Cinder Snap", "Nuzzle"],
+      "sprites": {
+        "front": "lokain_front.png"
+      }
+    },
+    {
+      "name": "Momo",
+      "level": 5,
+      "max_hp": 30,
+      "attack": 10,
+      "defense": 12,
+      "speed": 10,
+      "type": "flora",
+      "moves": ["Leaf Gust", "Nuzzle"],
+      "sprites": {
+        "front": "momo_front.png"
+      }
+    },
+    {
+      "name": "Loki",
+      "level": 6,
+      "max_hp": 31,
+      "attack": 12,
+      "defense": 9,
+      "speed": 14,
+      "type": "ember",
+      "moves": ["Cinder Snap", "Nuzzle"],
+      "sprites": {
+        "front": "loki_front.png"
+      }
+    },
+    {
+      "name": "Embercub",
+      "level": 5,
+      "max_hp": 30,
+      "attack": 12,
+      "defense": 8,
+      "speed": 10,
+      "type": "ember",
+      "moves": ["Cinder Snap", "Nuzzle"]
+    },
+    {
+      "name": "Splashfin",
+      "level": 5,
+      "max_hp": 32,
+      "attack": 11,
+      "defense": 9,
+      "speed": 9,
+      "type": "aqua",
+      "moves": ["Ripple Shot", "Nuzzle"]
+    },
+    {
+      "name": "Budling",
+      "level": 5,
+      "max_hp": 28,
+      "attack": 10,
+      "defense": 11,
+      "speed": 8,
+      "type": "flora",
+      "moves": ["Leaf Gust", "Nuzzle"]
+    }
+  ]
+}
