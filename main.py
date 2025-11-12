@@ -1,9 +1,11 @@
 # Install pygame with: pip install pygame
 # Run the game with: python main.py
 
+import json
 import random
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import pygame
@@ -35,6 +37,8 @@ class Monster:
     moves: List[Move] = field(default_factory=list)
     exp: int = 0
     exp_to_next: int = 20
+    front_sprite: Optional[pygame.Surface] = field(default=None, repr=False)
+    back_sprite: Optional[pygame.Surface] = field(default=None, repr=False)
 
     def is_fainted(self) -> bool:
         return self.current_hp <= 0
@@ -65,6 +69,14 @@ class Monster:
 # ----------------------------------------------------------------------------
 
 
+ASSETS_DIR = Path(__file__).parent / "assets"
+SPRITE_DIR = ASSETS_DIR / "sprites"
+MONSTER_DATA_FILE = ASSETS_DIR / "monsters.json"
+SAVE_FILE = Path(__file__).parent / "savegame.json"
+
+MAX_PARTY_SIZE = 6
+
+
 def create_move_library() -> Dict[str, Move]:
     """Return the core move definitions. Extend this to add new moves."""
     return {
@@ -75,49 +87,60 @@ def create_move_library() -> Dict[str, Move]:
     }
 
 
+def load_sprite_image(filename: Optional[str]) -> Optional[pygame.Surface]:
+    if not filename:
+        return None
+    sprite_path = Path(filename)
+    if not sprite_path.is_absolute():
+        sprite_path = SPRITE_DIR / sprite_path
+    if not sprite_path.exists():
+        return None
+    try:
+        image = pygame.image.load(str(sprite_path)).convert_alpha()
+    except pygame.error:
+        return None
+    return pygame.transform.smoothscale(image, (96, 96))
+
+
 def create_monster_templates(move_library: Dict[str, Move]) -> Dict[str, Monster]:
-    """Base monster data. Copy these templates when spawning monsters."""
-    return {
-        "Embercub": Monster(
-            name="Embercub",
-            level=5,
-            max_hp=30,
-            current_hp=30,
-            attack=12,
-            defense=8,
-            speed=10,
-            type="ember",
-            moves=[move_library["Cinder Snap"], move_library["Nuzzle"]],
-            exp=0,
-            exp_to_next=20,
-        ),
-        "Splashfin": Monster(
-            name="Splashfin",
-            level=5,
-            max_hp=32,
-            current_hp=32,
-            attack=11,
-            defense=9,
-            speed=9,
-            type="aqua",
-            moves=[move_library["Ripple Shot"], move_library["Nuzzle"]],
-            exp=0,
-            exp_to_next=20,
-        ),
-        "Budling": Monster(
-            name="Budling",
-            level=5,
-            max_hp=28,
-            current_hp=28,
-            attack=10,
-            defense=11,
-            speed=8,
-            type="flora",
-            moves=[move_library["Leaf Gust"], move_library["Nuzzle"]],
-            exp=0,
-            exp_to_next=20,
-        ),
-    }
+    """Load monster templates from JSON, falling back to built-in defaults."""
+
+    if not MONSTER_DATA_FILE.exists():
+        raise FileNotFoundError(
+            "Missing monsters.json. Add your monster roster to assets/monsters.json."
+        )
+
+    with MONSTER_DATA_FILE.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    templates: Dict[str, Monster] = {}
+    for entry in data.get("monsters", []):
+        name = entry["name"]
+        move_names = entry.get("moves", [])
+        moves: List[Move] = []
+        for move_name in move_names:
+            if move_name not in move_library:
+                raise ValueError(f"Move '{move_name}' referenced by {name} is not defined.")
+            moves.append(move_library[move_name])
+
+        sprites = entry.get("sprites", {})
+        templates[name] = Monster(
+            name=name,
+            level=entry.get("level", 1),
+            max_hp=entry.get("max_hp", 20),
+            current_hp=entry.get("current_hp", entry.get("max_hp", 20)),
+            attack=entry.get("attack", 10),
+            defense=entry.get("defense", 10),
+            speed=entry.get("speed", 10),
+            type=entry.get("type", "normal"),
+            moves=moves,
+            exp=entry.get("exp", 0),
+            exp_to_next=entry.get("exp_to_next", 20),
+            front_sprite=load_sprite_image(sprites.get("front")),
+            back_sprite=load_sprite_image(sprites.get("back")),
+        )
+
+    return templates
 
 
 def clone_monster(template: Monster) -> Monster:
@@ -134,7 +157,82 @@ def clone_monster(template: Monster) -> Monster:
         moves=list(template.moves),
         exp=template.exp,
         exp_to_next=template.exp_to_next,
+        front_sprite=template.front_sprite,
+        back_sprite=template.back_sprite,
     )
+
+
+def monster_to_dict(monster: Monster) -> Dict[str, int | str]:
+    return {
+        "name": monster.name,
+        "level": monster.level,
+        "max_hp": monster.max_hp,
+        "current_hp": monster.current_hp,
+        "attack": monster.attack,
+        "defense": monster.defense,
+        "speed": monster.speed,
+        "exp": monster.exp,
+        "exp_to_next": monster.exp_to_next,
+    }
+
+
+def monster_from_dict(data: Dict[str, object], templates: Dict[str, Monster]) -> Optional[Monster]:
+    name = data.get("name")
+    if not name or name not in templates:
+        return None
+    base = clone_monster(templates[name])
+    base.level = data.get("level", base.level)
+    base.max_hp = data.get("max_hp", base.max_hp)
+    base.current_hp = min(data.get("current_hp", base.max_hp), base.max_hp)
+    base.attack = data.get("attack", base.attack)
+    base.defense = data.get("defense", base.defense)
+    base.speed = data.get("speed", base.speed)
+    base.exp = data.get("exp", base.exp)
+    base.exp_to_next = data.get("exp_to_next", base.exp_to_next)
+    return base
+
+
+def clamp_player_position(x: int, y: int) -> tuple[int, int]:
+    return max(0, min(MAP_WIDTH - 1, x)), max(0, min(MAP_HEIGHT - 1, y))
+
+
+def save_game_state(path: Path, player: "Player", party: List[Monster]) -> None:
+    data = {
+        "player": {"x": player.tile_x, "y": player.tile_y},
+        "party": [monster_to_dict(monster) for monster in party[:MAX_PARTY_SIZE]],
+    }
+    path.write_text(json.dumps(data, indent=2))
+
+
+def load_game_state(
+    path: Path,
+    templates: Dict[str, Monster],
+    default_party: List[Monster],
+    default_position: tuple[int, int],
+) -> tuple[tuple[int, int], List[Monster]]:
+    if not path.exists():
+        return default_position, list(default_party)
+
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return default_position, list(default_party)
+
+    player_data = data.get("player", {})
+    player_x = int(player_data.get("x", default_position[0]))
+    player_y = int(player_data.get("y", default_position[1]))
+    player_position = clamp_player_position(player_x, player_y)
+
+    loaded_party: List[Monster] = []
+    for entry in data.get("party", [])[:MAX_PARTY_SIZE]:
+        monster = monster_from_dict(entry, templates)
+        if monster:
+            loaded_party.append(monster)
+
+    if not loaded_party:
+        loaded_party = list(default_party)
+
+    return player_position, loaded_party
 
 
 # ----------------------------------------------------------------------------
@@ -162,6 +260,7 @@ MAP_LAYOUT = [
 ]
 MAP_WIDTH = len(MAP_LAYOUT[0])
 MAP_HEIGHT = len(MAP_LAYOUT)
+DEFAULT_START_POSITION = (2, 2)
 
 TILE_TYPES = {
     "#": {"color": (70, 70, 70), "walkable": False, "name": "Wall"},
@@ -189,7 +288,13 @@ class Player:
 
 
 class BattleState:
-    def __init__(self, player_monster: Monster, enemy_monster: Monster):
+    def __init__(
+        self,
+        player_monster: Monster,
+        enemy_monster: Monster,
+        party_size: int,
+        max_party_size: int,
+    ):
         self.player_monster = player_monster
         self.enemy_monster = enemy_monster
         self.menu_state = "action"  # "action" or "move"
@@ -199,6 +304,10 @@ class BattleState:
         self.pending_enemy_turn = False
         self.after_battle_callback: Optional[Callable[[], None]] = None
         self.ended = False
+        self.party_size = party_size
+        self.max_party_size = max_party_size
+        self.action_options: List[str] = ["Fight", "Catch", "Run"]
+        self.captured_monster: Optional[Monster] = None
 
     def queue_message(self, text: str, callback: Optional[Callable[[], None]] = None) -> None:
         self.message_queue.append({"text": text, "callback": callback})
@@ -249,11 +358,21 @@ def calculate_exp_gain(defeated: Monster) -> int:
     return 10 + defeated.level * 5
 
 
-def start_battle(player_monster: Monster, wild_monsters: List[Monster]) -> BattleState:
+def start_battle(
+    player_monster: Monster,
+    wild_monsters: List[Monster],
+    party_size: int,
+    max_party_size: int,
+) -> BattleState:
     enemy_template = random.choice(wild_monsters)
     enemy = clone_monster(enemy_template)
     player_mon = clone_monster(player_monster)
-    return BattleState(player_monster=player_mon, enemy_monster=enemy)
+    return BattleState(
+        player_monster=player_mon,
+        enemy_monster=enemy,
+        party_size=party_size,
+        max_party_size=max_party_size,
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -301,9 +420,18 @@ def draw_battle(screen: pygame.Surface, battle: BattleState, font: pygame.font.F
         small_font,
     )
 
-    # Basic placeholders for monsters
-    pygame.draw.circle(screen, (255, 120, 80), (120, 260), 40)
-    pygame.draw.circle(screen, (80, 180, 255), (500, 200), 40)
+    def blit_or_placeholder(monster: Monster, position: tuple[int, int], fallback_color: tuple[int, int, int]) -> None:
+        sprite = monster.front_sprite
+        if monster is battle.player_monster:
+            sprite = monster.back_sprite or monster.front_sprite
+        if sprite:
+            rect = sprite.get_rect(center=position)
+            screen.blit(sprite, rect)
+        else:
+            pygame.draw.circle(screen, fallback_color, position, 48)
+
+    blit_or_placeholder(battle.player_monster, (140, 280), (255, 120, 80))
+    blit_or_placeholder(battle.enemy_monster, (500, 200), (80, 180, 255))
 
     # Draw battle menu area
     menu_rect = pygame.Rect(20, 360, 600, 100)
@@ -315,15 +443,103 @@ def draw_battle(screen: pygame.Surface, battle: BattleState, font: pygame.font.F
     if current_message:
         draw_text(screen, current_message, (menu_rect.x + 12, menu_rect.y + 12), small_font)
     elif battle.menu_state == "action":
-        options = ["Fight", "Run"]
-        for idx, option in enumerate(options):
+        for idx, option in enumerate(battle.action_options):
             prefix = "> " if idx == battle.action_index else "  "
-            draw_text(screen, prefix + option, (menu_rect.x + 12, menu_rect.y + 12 + idx * 24), small_font)
+            label = option
+            if option == "Catch" and battle.party_size >= battle.max_party_size:
+                label = f"{option} (Party Full)"
+            draw_text(
+                screen,
+                prefix + label,
+                (menu_rect.x + 12, menu_rect.y + 12 + idx * 24),
+                small_font,
+            )
     elif battle.menu_state == "move":
         for idx, move in enumerate(battle.player_monster.moves):
             prefix = "> " if idx == battle.move_index else "  "
             text = f"{prefix}{move.name} ({int(move.accuracy * 100)}% accuracy)"
             draw_text(screen, text, (menu_rect.x + 12, menu_rect.y + 12 + idx * 24), small_font)
+
+
+def draw_party_menu(
+    screen: pygame.Surface,
+    party: List[Monster],
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
+    selected_index: int,
+) -> None:
+    overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 160))
+    screen.blit(overlay, (0, 0))
+
+    panel_rect = pygame.Rect(50, 50, WINDOW_WIDTH - 100, WINDOW_HEIGHT - 100)
+    pygame.draw.rect(screen, (245, 245, 245), panel_rect)
+    pygame.draw.rect(screen, (0, 0, 0), panel_rect, 2)
+
+    draw_text(screen, "Party Status", (panel_rect.x + 20, panel_rect.y + 16), font)
+    draw_text(
+        screen,
+        "UP/DOWN to inspect · TAB/P to close · S to save",
+        (panel_rect.x + 20, panel_rect.y + 46),
+        small_font,
+    )
+
+    list_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 80, 260, panel_rect.height - 100)
+    detail_x = list_rect.right + 30
+    for idx in range(MAX_PARTY_SIZE):
+        if idx < len(party):
+            monster = party[idx]
+            prefix = ">" if idx == selected_index else " "
+            draw_text(
+                screen,
+                f"{prefix} Slot {idx + 1}: {monster.name} Lv{monster.level}",
+                (list_rect.x, list_rect.y + idx * 28),
+                font,
+            )
+        else:
+            draw_text(
+                screen,
+                f"  Slot {idx + 1}: --- Empty ---",
+                (list_rect.x, list_rect.y + idx * 28),
+                font,
+            )
+
+    if not party:
+        draw_text(screen, "Your party is empty!", (detail_x, list_rect.y), font)
+        return
+
+    selected_index = max(0, min(selected_index, len(party) - 1))
+    selected = party[selected_index]
+    stats_y = list_rect.y
+    draw_text(screen, f"Name: {selected.name}", (detail_x, stats_y), font)
+    draw_text(screen, f"Type: {selected.type}", (detail_x, stats_y + 26), font)
+    draw_text(
+        screen,
+        f"Level {selected.level}  EXP {selected.exp}/{selected.exp_to_next}",
+        (detail_x, stats_y + 52),
+        small_font,
+    )
+    draw_text(
+        screen,
+        f"HP {selected.current_hp}/{selected.max_hp}  ATK {selected.attack}  DEF {selected.defense}  SPD {selected.speed}",
+        (detail_x, stats_y + 78),
+        small_font,
+    )
+
+    sprite = selected.front_sprite or selected.back_sprite
+    if sprite:
+        sprite_rect = sprite.get_rect()
+        sprite_rect.topleft = (detail_x, stats_y + 110)
+        screen.blit(sprite, sprite_rect)
+
+    draw_text(screen, "Moves:", (detail_x, stats_y + 220), font)
+    for idx, move in enumerate(selected.moves):
+        draw_text(
+            screen,
+            f"{move.name}  Pow {move.power}  Acc {int(move.accuracy * 100)}%",
+            (detail_x, stats_y + 246 + idx * 24),
+            small_font,
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -352,11 +568,17 @@ def handle_battle_input(event: pygame.event.Event, battle: BattleState) -> None:
 
     if battle.menu_state == "action":
         if event.key in (pygame.K_UP, pygame.K_DOWN):
-            battle.action_index = (battle.action_index + (1 if event.key == pygame.K_DOWN else -1)) % 2
+            option_count = len(battle.action_options)
+            battle.action_index = (
+                battle.action_index + (1 if event.key == pygame.K_DOWN else -1)
+            ) % option_count
         elif event.key in (pygame.K_RETURN, pygame.K_z, pygame.K_SPACE):
-            if battle.action_index == 0:
+            selected_option = battle.action_options[battle.action_index]
+            if selected_option == "Fight":
                 battle.menu_state = "move"
                 battle.move_index = 0
+            elif selected_option == "Catch":
+                attempt_capture(battle)
             else:
                 attempt_escape(battle)
     elif battle.menu_state == "move":
@@ -420,6 +642,33 @@ def execute_enemy_turn(battle: BattleState) -> None:
             battle.after_battle_callback = lambda: setattr(battle, "ended", True)
 
 
+def attempt_capture(battle: BattleState) -> None:
+    battle.queue_message("You threw a capture charm!")
+
+    if battle.party_size >= battle.max_party_size:
+        battle.queue_message("Your party is full! Swap someone out first.")
+        battle.pending_enemy_turn = False
+    else:
+        enemy = battle.enemy_monster
+        hp_ratio = enemy.current_hp / enemy.max_hp if enemy.max_hp else 1.0
+        catch_chance = 0.3 + (1.0 - hp_ratio) * 0.5
+        if random.random() <= catch_chance:
+
+            def finish_capture() -> None:
+                battle.captured_monster = clone_monster(enemy)
+                battle.party_size = min(battle.max_party_size, battle.party_size + 1)
+                battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+
+            battle.queue_message(f"You caught {enemy.name}!", callback=finish_capture)
+            battle.pending_enemy_turn = False
+        else:
+            battle.queue_message(f"{enemy.name} broke free!")
+            battle.pending_enemy_turn = True
+
+    battle.menu_state = "action"
+    battle.action_index = 0
+
+
 def attempt_escape(battle: BattleState) -> None:
     if random.random() < 0.5:
         battle.queue_message("Got away safely!", callback=lambda: setattr(battle, "ended", True))
@@ -443,17 +692,27 @@ def main() -> None:
 
     move_library = create_move_library()
     monster_templates = create_monster_templates(move_library)
-    player_party = [clone_monster(monster_templates["Embercub"])]
-    wild_pool = [monster_templates[name] for name in monster_templates]
+    template_list = list(monster_templates.values())
+    default_party = [clone_monster(monster) for monster in template_list[:3]]
+    if not default_party:
+        raise ValueError("No monsters defined in monsters.json. Add at least one monster entry.")
+    player_position, player_party = load_game_state(
+        SAVE_FILE, monster_templates, default_party, DEFAULT_START_POSITION
+    )
+    player_party = player_party[:MAX_PARTY_SIZE]
+    if not player_party:
+        raise ValueError("Unable to load a valid party from monsters.json or save data.")
+    wild_pool = template_list
 
-    player = Player(tile_x=2, tile_y=2)
+    player = Player(tile_x=player_position[0], tile_y=player_position[1])
     game_mode = "overworld"
     active_battle: Optional[BattleState] = None
     overworld_message: Optional[str] = None
     overworld_message_timer = 0
+    party_selection = 0
 
     def end_battle() -> None:
-        nonlocal game_mode, active_battle
+        nonlocal game_mode, active_battle, overworld_message, overworld_message_timer
         if not active_battle:
             return
         if active_battle.player_monster.is_fainted():
@@ -462,6 +721,16 @@ def main() -> None:
                 monster.heal()
         else:
             player_party[0] = active_battle.player_monster
+
+        if active_battle.captured_monster:
+            if len(player_party) < MAX_PARTY_SIZE:
+                player_party.append(active_battle.captured_monster)
+                overworld_message = f"{active_battle.captured_monster.name} joined your party!"
+            else:
+                overworld_message = (
+                    f"No room for {active_battle.captured_monster.name}. It returned to the wild."
+                )
+            overworld_message_timer = 240
         game_mode = "overworld"
         active_battle = None
 
@@ -471,6 +740,20 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif game_mode == "overworld" and event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_s:
+                    save_game_state(SAVE_FILE, player, player_party)
+                    overworld_message = "Game saved!"
+                    overworld_message_timer = 180
+                    continue
+
+                if event.key in (pygame.K_p, pygame.K_TAB):
+                    if player_party:
+                        party_selection = max(0, min(party_selection, len(player_party) - 1))
+                    else:
+                        party_selection = 0
+                    game_mode = "party_menu"
+                    continue
+
                 dx, dy = 0, 0
                 if event.key == pygame.K_UP:
                     dy = -1
@@ -495,11 +778,24 @@ def main() -> None:
                             overworld_message_timer = 180
                         if tile_symbol == "G" and encounter_chance():
                             game_mode = "battle"
-                            active_battle = start_battle(player_party[0], wild_pool)
+                            active_battle = start_battle(
+                                player_party[0], wild_pool, len(player_party), MAX_PARTY_SIZE
+                            )
                             overworld_message = None
 
             elif game_mode == "battle" and active_battle:
                 handle_battle_input(event, active_battle)
+            elif game_mode == "party_menu" and event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_ESCAPE, pygame.K_p, pygame.K_TAB):
+                    game_mode = "overworld"
+                elif event.key == pygame.K_s:
+                    save_game_state(SAVE_FILE, player, player_party)
+                    overworld_message = "Game saved!"
+                    overworld_message_timer = 180
+                elif event.key == pygame.K_UP and player_party:
+                    party_selection = (party_selection - 1) % len(player_party)
+                elif event.key == pygame.K_DOWN and player_party:
+                    party_selection = (party_selection + 1) % len(player_party)
 
         screen.fill((0, 0, 0))
 
@@ -509,6 +805,9 @@ def main() -> None:
             draw_battle(screen, active_battle, font, small_font)
             if getattr(active_battle, "ended", False) and not active_battle.message_queue and not active_battle.pending_enemy_turn:
                 end_battle()
+        elif game_mode == "party_menu":
+            draw_overworld(screen, player, font, overworld_message)
+            draw_party_menu(screen, player_party, font, small_font, party_selection)
 
         if overworld_message_timer > 0:
             overworld_message_timer -= 1
@@ -527,8 +826,9 @@ if __name__ == "__main__":
 
 
 """
-Run the game with: python main.py
-Add new monsters by editing create_monster_templates.
-Add new moves inside create_move_library.
-Edit MAP_LAYOUT and TILE_TYPES to build new areas.
+Quick reference:
+  - Run the game with: python main.py
+  - Add or tweak monsters in assets/monsters.json (sprites go in assets/sprites)
+  - Add new moves inside create_move_library.
+  - Edit MAP_LAYOUT and TILE_TYPES to build new areas.
 """

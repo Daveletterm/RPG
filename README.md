@@ -21,26 +21,47 @@ arrow keys to walk around; step into grass tiles to find battles.
 ### Overworld
 
 * **Arrow keys** – move the player
+* **Tab / P** – open the party status menu overlay
+* **S** – write your current location and party to `savegame.json`
 * **Esc** – close the game window
 
 Visit the light-green healing floor inside the small house to fully restore your
-party.
+party. While in the party menu, use **Up/Down** to highlight a monster and read
+its stats and moves. Press **Tab** or **P** again to return to the overworld.
+You can inspect up to six party slots at once; empty slots are shown so you can
+plan future captures. Press **S** in this view to save without leaving the menu.
 
 ### Battle
 
 * **Arrow keys / W S** – pick menu options
 * **Enter / Space / Z** – confirm selections
-* **Esc** – back out of sub-menus
+* **Esc** – back out of the move list
 
-Choose **Fight** to select a move, **Bag** (placeholder) to do nothing, **Party**
-to swap monsters (placeholder), or **Run** to attempt an escape.
+Choose **Fight** to select a move, **Catch** to try recruiting the foe, or
+**Run** to attempt an escape. The currently selected party leader takes part in
+combat. Catch chances improve as the wild monster's HP drops. Captured monsters
+join your party automatically if a slot is free.
+
+## Saving and continuing
+
+The game automatically looks for `savegame.json` next to `main.py` when it
+starts. If present, the file restores your previous location and party (up to
+six monsters). Use the **S** shortcut from the overworld or party menu to update
+the save file at any time.
 
 ## Project structure
 
-* `main.py` – full game logic and rendering loop
-* `assets/` – placeholder directory for future sprites or audio
+* `main.py` – full game logic, rendering loop, and menu handling
+* `assets/monsters.json` – roster and stat definitions for every creature
+* `assets/sprites/` – drop front/back PNG sprites here (referenced by name in
+  `monsters.json`)
 * `requirements.txt` – dependency pin for Pygame
 * `.gitignore` – ignores virtual environments, caches, and save data
 
+Add new monsters by placing their sprite(s) in `assets/sprites/` and appending a
+JSON entry to `assets/monsters.json`. Reference front/back sprites by filename
+under the `sprites.front` and optional `sprites.back` keys. Each monster lists
+the moves it can use; the move names must already exist in
+`create_move_library()` inside `main.py`.
 Feel free to fork the project and extend the content, add audio/visual polish, or
 experiment with new battle mechanics.
