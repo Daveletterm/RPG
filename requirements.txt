@@ -1,1 +1,1 @@
-# Mythic Bond uses only the Python standard library.
+pygame>=2.5.0
