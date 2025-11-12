@@ -214,12 +214,12 @@ def load_game_state(
     default_position: tuple[int, int],
 ) -> tuple[tuple[int, int], List[Monster], List[Monster]]:
     if not path.exists():
-        return default_position, list(default_party)
+        return default_position, list(default_party), []
 
     try:
         data = json.loads(path.read_text())
     except json.JSONDecodeError:
-        return default_position, list(default_party)
+        return default_position, list(default_party), []
 
     player_data = data.get("player", {})
     player_x = int(player_data.get("x", default_position[0]))
