@@ -587,10 +587,18 @@ class BattleState:
         self.enemy_monster = enemy_monster
         self.max_party_size = max_party_size
 
-        self.active_index = next(
-            (idx for idx, monster in enumerate(self.player_party) if not monster.is_fainted()),
-            0,
-        )
+        preferred_lead = 0
+        if self.player_party[preferred_lead].is_fainted():
+            preferred_lead = next(
+                (
+                    idx
+                    for idx, monster in enumerate(self.player_party)
+                    if not monster.is_fainted()
+                ),
+                0,
+            )
+
+        self.active_index = preferred_lead
         self.player_monster = self.player_party[self.active_index]
         self.switch_index = self.active_index
         self.force_switch = False
@@ -700,6 +708,8 @@ def draw_text(surface: pygame.Surface, text: str, position: tuple[int, int], fon
     rendered = font.render(text, True, color)
     surface.blit(rendered, position)
 
+    player_center_x = player.tile_x * TILE_SIZE + TILE_SIZE // 2
+    player_center_y = player.tile_y * TILE_SIZE + TILE_SIZE // 2
 
 def draw_overworld(
     screen: pygame.Surface,
