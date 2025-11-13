@@ -2,6 +2,7 @@
 # Run the game with: python main.py
 
 import json
+import math
 import random
 import sys
 from dataclasses import dataclass, field
@@ -251,35 +252,309 @@ def load_game_state(
 TILE_SIZE = 32
 WINDOW_WIDTH, WINDOW_HEIGHT = 640, 480
 MAP_LAYOUT = [
-    "####################",
-    "#....GGGGGG....GG..#",
-    "#..######....####..#",
-    "#..#....#....#..#..#",
-    "#..#....#....#..#..#",
-    "#....CCCCCCCC......#",
-    "#....C......C..GG..#",
-    "#....C.DD..D.C.....#",
-    "#....CCCCCCCC......#",
-    "#..................#",
-    "#.SSS......GGGG....#",
-    "#.SHS......GGGG....#",
-    "#.SDS......GGGG....#",
-    "#..................#",
-    "####################",
+    "################################",
+    "#........GGGGGGGGGGGG........###",
+    "#..WWWWW..GGGGGGGGGGGG....##...#",
+    "#..WWWWW..GG....#####....##...##",
+    "#..WBBBW..GG....#...#....##...##",
+    "#..WBBBW........#H..#....##...##",
+    "#..WWWWW........#...#....##...##",
+    "#..........#####....######..####",
+    "#..SSSSS...#...#....#.......####",
+    "#..S...S...#...#....#.......####",
+    "#..SDH.S...#...######.......####",
+    "#..S...S...#.................###",
+    "#..SSSSS...#..GGGGGGGGGGGG...###",
+    "#..........#..GGGGGGGGGGGG...###",
+    "###.####...#................####",
+    "##..####.....................###",
+    "##...........................###",
+    "##...............SSSSSSSS....###",
+    "##...............S....DS....####",
+    "##...............S....SS....####",
+    "##...............SSSSSSS....####",
+    "##...........................###",
+    "################################",
 ]
 MAP_WIDTH = len(MAP_LAYOUT[0])
 MAP_HEIGHT = len(MAP_LAYOUT)
+MAP_PIXEL_WIDTH = MAP_WIDTH * TILE_SIZE
+MAP_PIXEL_HEIGHT = MAP_HEIGHT * TILE_SIZE
 DEFAULT_START_POSITION = (2, 2)
 
 TILE_TYPES = {
-    "#": {"color": (70, 70, 70), "walkable": False, "name": "Wall"},
-    ".": {"color": (200, 200, 160), "walkable": True, "name": "Ground"},
-    "G": {"color": (120, 200, 120), "walkable": True, "name": "Grass"},
-    "C": {"color": (150, 150, 180), "walkable": False, "name": "Great Hall"},
-    "D": {"color": (230, 210, 150), "walkable": True, "name": "Door"},
-    "S": {"color": (140, 140, 170), "walkable": False, "name": "House Wall"},
-    "H": {"color": (170, 230, 200), "walkable": True, "name": "Healing Floor"},
+    "#": {
+        "walkable": False,
+        "name": "Stone Wall",
+        "pattern": "stone",
+        "base_color": (76, 84, 104),
+        "accent_color": (52, 58, 76),
+    },
+    ".": {
+        "walkable": True,
+        "name": "Cobblestone Path",
+        "pattern": "path",
+        "base_color": (196, 178, 128),
+        "accent_color": (160, 140, 96),
+    },
+    "G": {
+        "walkable": True,
+        "name": "Tall Grass",
+        "pattern": "grass",
+        "base_color": (84, 156, 78),
+        "accent_colors": [(70, 132, 66), (102, 176, 108), (60, 114, 62)],
+    },
+    "C": {
+        "walkable": False,
+        "name": "Great Hall",
+        "pattern": "floor",
+        "base_color": (168, 166, 192),
+        "accent_color": (142, 140, 170),
+    },
+    "D": {
+        "walkable": True,
+        "name": "Doorway",
+        "pattern": "door",
+        "base_color": (196, 162, 108),
+        "accent_color": (120, 88, 52),
+    },
+    "S": {
+        "walkable": False,
+        "name": "House Wall",
+        "pattern": "house_wall",
+        "base_color": (190, 186, 170),
+        "accent_color": (124, 98, 68),
+    },
+    "H": {
+        "walkable": True,
+        "name": "Healing Floor",
+        "pattern": "healing",
+        "base_color": (170, 226, 208),
+        "accent_color": (106, 176, 168),
+    },
+    "W": {
+        "walkable": False,
+        "name": "Water",
+        "pattern": "water",
+        "base_color": (42, 102, 168),
+        "accent_color": (90, 164, 220),
+    },
+    "B": {
+        "walkable": True,
+        "name": "Bridge",
+        "pattern": "planks",
+        "base_color": (170, 138, 92),
+        "accent_color": (118, 88, 54),
+    },
 }
+
+
+def create_patterned_tile_surface(
+    tile_key: str, tile_info: Dict[str, object], tile_size: int
+) -> pygame.Surface:
+    """Build a textured tile surface for the overworld."""
+
+    surface = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+    base_color = tile_info.get("base_color", (200, 200, 200))
+    surface.fill(base_color)  # type: ignore[arg-type]
+
+    pattern = tile_info.get("pattern", "solid")
+    rng = random.Random(f"{tile_key}-{tile_size}")
+
+    def scatter_pixels(colors: List[tuple[int, int, int]], count: int) -> None:
+        for _ in range(count):
+            x = rng.randrange(tile_size)
+            y = rng.randrange(tile_size)
+            surface.set_at((x, y), colors[rng.randrange(len(colors))])
+
+    if pattern == "grass":
+        accent_colors = tile_info.get("accent_colors", []) or [
+            (64, 132, 68),
+            (100, 180, 110),
+        ]
+        scatter_pixels(accent_colors, tile_size * 3)
+        for _ in range(tile_size // 2):
+            start_x = rng.randrange(tile_size)
+            start_y = rng.randrange(tile_size // 2, tile_size)
+            end_x = start_x + rng.randint(-2, 2)
+            end_y = start_y - rng.randint(3, 6)
+            pygame.draw.line(
+                surface,
+                accent_colors[rng.randrange(len(accent_colors))],
+                (start_x, start_y),
+                (end_x, max(0, end_y)),
+                1,
+            )
+    elif pattern == "path":
+        accent = tile_info.get("accent_color", (140, 120, 80))
+        scatter_pixels([accent, (220, 204, 160)], tile_size * 2)
+        for _ in range(tile_size // 2):
+            radius = rng.randint(1, 2)
+            pygame.draw.circle(
+                surface,
+                (160, 150, 120),
+                (rng.randrange(tile_size), rng.randrange(tile_size)),
+                radius,
+            )
+    elif pattern == "stone":
+        mortar = tile_info.get("accent_color", (60, 66, 84))
+        brick_h = max(4, tile_size // 4)
+        brick_w = max(6, tile_size // 3)
+        for y in range(0, tile_size, brick_h):
+            offset = (y // brick_h % 2) * (brick_w // 2)
+            pygame.draw.line(surface, mortar, (0, y), (tile_size, y), 1)
+            for x in range(-offset, tile_size, brick_w):
+                rect = pygame.Rect(x, y, brick_w, brick_h)
+                pygame.draw.rect(surface, mortar, rect, 1)
+    elif pattern == "floor":
+        accent = tile_info.get("accent_color", (148, 146, 170))
+        block = max(4, tile_size // 4)
+        for y in range(0, tile_size, block):
+            for x in range(0, tile_size, block):
+                if (x // block + y // block) % 2 == 0:
+                    pygame.draw.rect(
+                        surface,
+                        accent,
+                        pygame.Rect(x, y, block, block),
+                    )
+    elif pattern == "door":
+        accent = tile_info.get("accent_color", (116, 88, 52))
+        pygame.draw.rect(
+            surface,
+            accent,
+            pygame.Rect(tile_size // 4, tile_size // 6, tile_size // 2, tile_size - tile_size // 3),
+            0,
+        )
+        pygame.draw.circle(
+            surface,
+            (240, 220, 180),
+            (tile_size // 2 + tile_size // 5, tile_size // 2),
+            max(1, tile_size // 16),
+        )
+    elif pattern == "house_wall":
+        beam = tile_info.get("accent_color", (120, 94, 68))
+        pygame.draw.rect(surface, beam, pygame.Rect(0, 0, tile_size, max(2, tile_size // 16)))
+        pygame.draw.rect(
+            surface, beam, pygame.Rect(0, tile_size - max(2, tile_size // 16), tile_size, tile_size // 16)
+        )
+        pygame.draw.rect(surface, beam, pygame.Rect(tile_size // 3, 0, tile_size // 8, tile_size))
+        pygame.draw.rect(
+            surface, beam, pygame.Rect(tile_size - tile_size // 3, 0, tile_size // 8, tile_size)
+        )
+    elif pattern == "healing":
+        accent = tile_info.get("accent_color", (90, 170, 160))
+        cross_w = max(4, tile_size // 5)
+        pygame.draw.rect(
+            surface,
+            accent,
+            pygame.Rect(tile_size // 2 - cross_w // 2, tile_size // 4, cross_w, tile_size // 2),
+        )
+        pygame.draw.rect(
+            surface,
+            accent,
+            pygame.Rect(tile_size // 4, tile_size // 2 - cross_w // 2, tile_size // 2, cross_w),
+        )
+    elif pattern == "water":
+        accent = tile_info.get("accent_color", (86, 158, 220))
+        for y in range(tile_size):
+            blend = y / max(1, tile_size - 1)
+            color = (
+                int(base_color[0] * (1 - blend) + accent[0] * blend),
+                int(base_color[1] * (1 - blend) + accent[1] * blend),
+                int(base_color[2] * (1 - blend) + accent[2] * blend),
+            )
+            pygame.draw.line(surface, color, (0, y), (tile_size, y))
+        wave_color = (230, 245, 255)
+        for _ in range(tile_size // 2):
+            start_x = rng.randrange(tile_size)
+            length = rng.randint(tile_size // 2, tile_size)
+            pygame.draw.arc(
+                surface,
+                wave_color,
+                pygame.Rect(start_x - length // 2, rng.randrange(tile_size), length, tile_size // 2),
+                0,
+                math.pi,
+                1,
+            )
+    elif pattern == "planks":
+        accent = tile_info.get("accent_color", (110, 84, 60))
+        plank_h = max(4, tile_size // 5)
+        for y in range(0, tile_size, plank_h):
+            pygame.draw.rect(surface, accent, pygame.Rect(0, y, tile_size, plank_h), 1)
+            nail_y = y + plank_h // 2
+            pygame.draw.circle(surface, (70, 50, 30), (tile_size // 4, nail_y), max(1, plank_h // 6))
+            pygame.draw.circle(
+                surface, (70, 50, 30), (tile_size - tile_size // 4, nail_y), max(1, plank_h // 6)
+            )
+    else:
+        scatter_pixels([tuple(int(c * 0.9) for c in base_color)], tile_size)
+
+    border = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+    pygame.draw.rect(border, (0, 0, 0, 30), border.get_rect(), 1)
+    surface.blit(border, (0, 0))
+
+    return surface.convert_alpha()
+
+
+def build_tile_surfaces(tile_types: Dict[str, Dict[str, object]], tile_size: int) -> Dict[str, pygame.Surface]:
+    return {
+        tile: create_patterned_tile_surface(tile, info, tile_size)
+        for tile, info in tile_types.items()
+    }
+
+
+def create_player_sprite(tile_size: int) -> pygame.Surface:
+    """Create a simple hero sprite with a distinct silhouette."""
+
+    width = tile_size - 10
+    height = tile_size - 4
+    sprite = pygame.Surface((width, height), pygame.SRCALPHA)
+
+    # Shadow
+    pygame.draw.ellipse(
+        sprite,
+        (40, 40, 40, 120),
+        pygame.Rect(width // 6, height - height // 6, width * 2 // 3, height // 5),
+    )
+
+    body_color = (210, 70, 70)
+    highlight = (240, 110, 110)
+    belt_color = (60, 60, 80)
+    head_color = (238, 214, 190)
+
+    body_rect = pygame.Rect(width // 3, height // 4, width // 3, height // 2)
+    pygame.draw.rect(sprite, body_color, body_rect)
+    pygame.draw.rect(sprite, highlight, body_rect.inflate(-width // 6, -height // 6))
+    pygame.draw.rect(
+        sprite,
+        belt_color,
+        pygame.Rect(body_rect.x, body_rect.y + body_rect.height // 2, body_rect.width, max(2, height // 12)),
+    )
+
+    head_radius = width // 4
+    pygame.draw.circle(sprite, head_color, (width // 2, height // 4), head_radius)
+    pygame.draw.circle(sprite, (50, 50, 50), (width // 2 - head_radius // 2, height // 4), max(1, head_radius // 5))
+    pygame.draw.circle(sprite, (50, 50, 50), (width // 2 + head_radius // 2, height // 4), max(1, head_radius // 5))
+
+    arm_color = (200, 180, 160)
+    arm_width = max(2, width // 6)
+    pygame.draw.rect(
+        sprite,
+        arm_color,
+        pygame.Rect(body_rect.x - arm_width, body_rect.y + height // 8, arm_width, body_rect.height - height // 8),
+    )
+    pygame.draw.rect(
+        sprite,
+        arm_color,
+        pygame.Rect(
+            body_rect.right,
+            body_rect.y + height // 8,
+            arm_width,
+            body_rect.height - height // 8,
+        ),
+    )
+
+    return sprite.convert_alpha()
 
 
 class Player:
@@ -426,17 +701,54 @@ def draw_text(surface: pygame.Surface, text: str, position: tuple[int, int], fon
     surface.blit(rendered, position)
 
 
-def draw_overworld(screen: pygame.Surface, player: Player, font: pygame.font.Font, message: Optional[str]) -> None:
+def draw_overworld(
+    screen: pygame.Surface,
+    player: Player,
+    font: pygame.font.Font,
+    message: Optional[str],
+    tile_surfaces: Dict[str, pygame.Surface],
+    player_sprite: pygame.Surface,
+) -> None:
+    screen.fill((76, 120, 160))
+
+    player_center_x = player.tile_x * TILE_SIZE + TILE_SIZE // 2
+    player_center_y = player.tile_y * TILE_SIZE + TILE_SIZE // 2
+
+    max_cam_x = max(0, MAP_PIXEL_WIDTH - WINDOW_WIDTH)
+    max_cam_y = max(0, MAP_PIXEL_HEIGHT - WINDOW_HEIGHT)
+    cam_x = max(0, min(player_center_x - WINDOW_WIDTH // 2, max_cam_x))
+    cam_y = max(0, min(player_center_y - WINDOW_HEIGHT // 2, max_cam_y))
+
     for y, row in enumerate(MAP_LAYOUT):
         for x, tile in enumerate(row):
-            tile_info = TILE_TYPES[tile]
-            rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-            pygame.draw.rect(screen, tile_info["color"], rect)
-            pygame.draw.rect(screen, (30, 30, 30), rect, 1)
+            draw_x = x * TILE_SIZE - cam_x
+            draw_y = y * TILE_SIZE - cam_y
+            if draw_x + TILE_SIZE < 0 or draw_y + TILE_SIZE < 0:
+                continue
+            if draw_x >= WINDOW_WIDTH or draw_y >= WINDOW_HEIGHT:
+                continue
+            tile_surface = tile_surfaces.get(tile) or tile_surfaces.get("#")
+            if tile_surface:
+                screen.blit(tile_surface, (draw_x, draw_y))
 
-    pygame.draw.rect(screen, (220, 60, 60), player.rect())
-    hint = message or "Use arrow keys to explore. Walk on grass to find creatures!"
-    draw_text(screen, hint, (10, WINDOW_HEIGHT - 25), font)
+    sprite_rect = player_sprite.get_rect()
+    sprite_x = (
+        player.tile_x * TILE_SIZE
+        - cam_x
+        + (TILE_SIZE - sprite_rect.width) // 2
+    )
+    sprite_y = (
+        player.tile_y * TILE_SIZE
+        - cam_y
+        + (TILE_SIZE - sprite_rect.height) // 2
+    )
+    screen.blit(player_sprite, (sprite_x, sprite_y))
+
+    hint_text = message or "Use arrow keys to explore. Walk on grass to find creatures!"
+    hint_surface = pygame.Surface((WINDOW_WIDTH, 32), pygame.SRCALPHA)
+    hint_surface.fill((0, 0, 0, 160))
+    screen.blit(hint_surface, (0, WINDOW_HEIGHT - 32))
+    draw_text(screen, hint_text, (12, WINDOW_HEIGHT - 26), font, color=(230, 230, 230))
 
 
 def draw_hp_bar(surface: pygame.Surface, font: pygame.font.Font, monster: Monster, position: tuple[int, int]) -> None:
@@ -531,6 +843,7 @@ def draw_party_menu(
     party_index: int,
     storage_index: int,
     view: str,
+    reorder_source: Optional[int],
 ) -> None:
     overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 160))
@@ -542,12 +855,22 @@ def draw_party_menu(
 
     title = "Party Status" if view == "party" else "Storage"
     draw_text(screen, title, (panel_rect.x + 20, panel_rect.y + 16), font)
-    draw_text(
-        screen,
-        "UP/DOWN to inspect · LEFT/RIGHT to change view · TAB/P to close · S to save",
-        (panel_rect.x + 20, panel_rect.y + 46),
-        small_font,
-    )
+
+    if view == "party":
+        if reorder_source is None:
+            hint = (
+                "UP/DOWN to inspect · ENTER to reorder · LEFT/RIGHT to change view · TAB/P to close · S to save"
+            )
+        else:
+            hint = (
+                "Choose swap target with UP/DOWN · ENTER to confirm · ESC to cancel · TAB/P to close"
+            )
+    else:
+        hint = (
+            "UP/DOWN to inspect · LEFT/RIGHT to change view · TAB/P to close · S to save"
+        )
+
+    draw_text(screen, hint, (panel_rect.x + 20, panel_rect.y + 46), small_font)
 
     list_rect = pygame.Rect(panel_rect.x + 20, panel_rect.y + 80, 280, panel_rect.height - 100)
     detail_x = list_rect.right + 30
@@ -557,10 +880,17 @@ def draw_party_menu(
             if idx < len(party):
                 monster = party[idx]
                 prefix = ">" if idx == party_index else " "
+                if reorder_source == idx:
+                    prefix = "*"
                 status = "FNT" if monster.is_fainted() else f"HP {monster.current_hp}/{monster.max_hp}"
+                suffix = ""
+                if reorder_source == idx:
+                    suffix = " [Selected]"
+                elif reorder_source is not None and idx == party_index:
+                    suffix = " [Swap]"
                 draw_text(
                     screen,
-                    f"{prefix} Slot {idx + 1}: {monster.name} Lv{monster.level} ({status})",
+                    f"{prefix} Slot {idx + 1}: {monster.name} Lv{monster.level} ({status}){suffix}",
                     (list_rect.x, list_rect.y + idx * 28),
                     font,
                 )
@@ -841,6 +1171,8 @@ def main() -> None:
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 24)
     small_font = pygame.font.Font(None, 20)
+    tile_surfaces = build_tile_surfaces(TILE_TYPES, TILE_SIZE)
+    player_sprite = create_player_sprite(TILE_SIZE)
 
     move_library = create_move_library()
     monster_templates = create_monster_templates(move_library)
@@ -865,6 +1197,7 @@ def main() -> None:
     party_selection = 0
     storage_selection = 0
     party_menu_view = "party"
+    party_reorder_source: Optional[int] = None
 
     def end_battle() -> None:
         nonlocal game_mode, active_battle, overworld_message, overworld_message_timer, player_storage
@@ -910,6 +1243,7 @@ def main() -> None:
                         party_selection = 0
                     game_mode = "party_menu"
                     party_menu_view = "party"
+                    party_reorder_source = None
                     continue
 
                 dx, dy = 0, 0
@@ -947,12 +1281,16 @@ def main() -> None:
                 handle_battle_input(event, active_battle)
             elif game_mode == "party_menu" and event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_p, pygame.K_TAB):
-                    game_mode = "overworld"
+                    if party_reorder_source is not None:
+                        party_reorder_source = None
+                    else:
+                        game_mode = "overworld"
                 elif event.key == pygame.K_s:
                     save_game_state(SAVE_FILE, player, player_party, player_storage)
                     overworld_message = "Game saved!"
                     overworld_message_timer = 180
                 elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    party_reorder_source = None
                     party_menu_view = "storage" if party_menu_view == "party" else "party"
                 elif event.key == pygame.K_UP:
                     if party_menu_view == "party" and player_party:
@@ -964,17 +1302,31 @@ def main() -> None:
                         party_selection = (party_selection + 1) % len(player_party)
                     elif party_menu_view == "storage" and player_storage:
                         storage_selection = (storage_selection + 1) % len(player_storage)
+                elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    if party_menu_view == "party" and player_party:
+                        if party_reorder_source is None:
+                            party_reorder_source = party_selection
+                        else:
+                            if party_selection != party_reorder_source:
+                                player_party[party_reorder_source], player_party[party_selection] = (
+                                    player_party[party_selection],
+                                    player_party[party_reorder_source],
+                                )
+                            party_reorder_source = None
+                elif event.key == pygame.K_BACKSPACE:
+                    if party_reorder_source is not None:
+                        party_reorder_source = None
 
         screen.fill((0, 0, 0))
 
         if game_mode == "overworld":
-            draw_overworld(screen, player, font, overworld_message)
+            draw_overworld(screen, player, font, overworld_message, tile_surfaces, player_sprite)
         elif game_mode == "battle" and active_battle:
             draw_battle(screen, active_battle, font, small_font)
             if getattr(active_battle, "ended", False) and not active_battle.message_queue and not active_battle.pending_enemy_turn:
                 end_battle()
         elif game_mode == "party_menu":
-            draw_overworld(screen, player, font, overworld_message)
+            draw_overworld(screen, player, font, overworld_message, tile_surfaces, player_sprite)
             draw_party_menu(
                 screen,
                 player_party,
@@ -984,6 +1336,7 @@ def main() -> None:
                 party_selection,
                 storage_selection,
                 party_menu_view,
+                party_reorder_source,
             )
 
         if overworld_message_timer > 0:
@@ -1007,5 +1360,6 @@ Quick reference:
   - Run the game with: python main.py
   - Add or tweak monsters in assets/monsters.json (sprites go in assets/sprites)
   - Add new moves inside create_move_library.
-  - Edit MAP_LAYOUT and TILE_TYPES to build new areas.
+  - Edit MAP_LAYOUT and TILE_TYPES to build new areas (the camera will scroll to
+    fit whatever size you design).
 """
