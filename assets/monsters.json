@@ -1,4 +1,11 @@
 {
+  "_comment": [
+    "Add new monsters by appending entries to the 'monsters' array below.",
+    "Each monster needs: name, level, max_hp, attack, defense, speed, and type (e.g. ember/aqua/flora/normal).",
+    "List the monster's moves by name; move stats live in Python's create_move_library().",
+    "Sprites live in assets/sprites/ and are referenced by filename under sprites.front and sprites.back.",
+    "Back sprites are optional; if omitted the front sprite will be reused."
+  ],
   "monsters": [
     {
       "name": "Spraygit",
@@ -82,6 +89,48 @@
       "speed": 8,
       "type": "flora",
       "moves": ["Leaf Gust", "Nuzzle"]
+    },
+    {
+      "name": "Flarekit",
+      "level": 5,
+      "max_hp": 30,
+      "attack": 13,
+      "defense": 9,
+      "speed": 11,
+      "type": "ember",
+      "moves": ["Cinder Snap", "Nuzzle"],
+      "sprites": {
+        "front": "flarekit_front.png",
+        "back": "flarekit_back.png"
+      }
+    },
+    {
+      "name": "Dripfin",
+      "level": 5,
+      "max_hp": 32,
+      "attack": 11,
+      "defense": 10,
+      "speed": 10,
+      "type": "aqua",
+      "moves": ["Ripple Shot", "Nuzzle"],
+      "sprites": {
+        "front": "dripfin_front.png",
+        "back": "dripfin_back.png"
+      }
+    },
+    {
+      "name": "Spriglet",
+      "level": 5,
+      "max_hp": 31,
+      "attack": 10,
+      "defense": 12,
+      "speed": 9,
+      "type": "flora",
+      "moves": ["Leaf Gust", "Nuzzle"],
+      "sprites": {
+        "front": "spriglet_front.png",
+        "back": "spriglet_back.png"
+      }
     }
   ]
 }
