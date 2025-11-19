@@ -7,7 +7,7 @@ import random
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 import pygame
 
@@ -73,6 +73,7 @@ class Monster:
 ASSETS_DIR = Path(__file__).parent / "assets"
 SPRITE_DIR = ASSETS_DIR / "sprites"
 MONSTER_DATA_FILE = ASSETS_DIR / "monsters.json"
+TRAINER_DATA_FILE = ASSETS_DIR / "trainers.json"
 SAVE_FILE = Path(__file__).parent / "savegame.json"
 
 MAX_PARTY_SIZE = 6
@@ -144,6 +145,43 @@ def create_monster_templates(move_library: Dict[str, Move]) -> Dict[str, Monster
     return templates
 
 
+def load_monster_definitions() -> tuple[Dict[str, Move], Dict[str, Monster]]:
+    """Load all monster-related data from disk and return (moves, templates)."""
+
+    move_library = create_move_library()
+    monster_templates = create_monster_templates(move_library)
+    return move_library, monster_templates
+
+
+def load_trainers() -> Dict[str, Dict[str, object]]:
+    """Load trainer definitions from JSON into a dictionary keyed by id."""
+
+    if not TRAINER_DATA_FILE.exists():
+        return {}
+
+    try:
+        trainer_data = json.loads(TRAINER_DATA_FILE.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+    trainers: Dict[str, Dict[str, object]] = {}
+    for entry in trainer_data.get("trainers", []):
+        identifier = entry.get("id")
+        name = entry.get("name")
+        if not identifier or not name:
+            continue
+        trainers[str(identifier)] = {
+            "id": str(identifier),
+            "name": str(name),
+            "is_gym_leader": bool(entry.get("is_gym_leader", False)),
+            "badge_name": entry.get("badge_name"),
+            "dialogue_before": entry.get("dialogue_before", []),
+            "dialogue_after": entry.get("dialogue_after", []),
+            "team": entry.get("team", []),
+        }
+    return trainers
+
+
 def clone_monster(template: Monster) -> Monster:
     """Create a copy of a monster template so encounters do not share state."""
     return Monster(
@@ -198,12 +236,23 @@ def clamp_player_position(x: int, y: int) -> tuple[int, int]:
 
 
 def save_game_state(
-    path: Path, player: "Player", party: List[Monster], storage: List[Monster]
+    path: Path,
+    player: "Player",
+    party: List[Monster],
+    storage: List[Monster],
+    badges: Optional[List[str]] = None,
+    defeated_trainers: Optional[List[str]] = None,
 ) -> None:
+    """Persist the player's position, party, storage, and trainer progress."""
+
+    badges = badges or []
+    defeated_trainers = defeated_trainers or []
     data = {
         "player": {"x": player.tile_x, "y": player.tile_y},
         "party": [monster_to_dict(monster) for monster in party[:MAX_PARTY_SIZE]],
         "storage": [monster_to_dict(monster) for monster in storage],
+        "badges": list(badges),
+        "defeated_trainers": list(defeated_trainers),
     }
     path.write_text(json.dumps(data, indent=2))
 
@@ -213,14 +262,14 @@ def load_game_state(
     templates: Dict[str, Monster],
     default_party: List[Monster],
     default_position: tuple[int, int],
-) -> tuple[tuple[int, int], List[Monster], List[Monster]]:
+) -> tuple[tuple[int, int], List[Monster], List[Monster], List[str], List[str]]:
     if not path.exists():
-        return default_position, list(default_party), []
+        return default_position, list(default_party), [], [], []
 
     try:
         data = json.loads(path.read_text())
     except json.JSONDecodeError:
-        return default_position, list(default_party), []
+        return default_position, list(default_party), [], [], []
 
     player_data = data.get("player", {})
     player_x = int(player_data.get("x", default_position[0]))
@@ -242,7 +291,10 @@ def load_game_state(
         if monster:
             loaded_storage.append(monster)
 
-    return player_position, loaded_party, loaded_storage
+    badges = data.get("badges", []) or []
+    defeated_trainers = data.get("defeated_trainers", []) or []
+
+    return player_position, loaded_party, loaded_storage, badges, defeated_trainers
 
 
 # ----------------------------------------------------------------------------
@@ -261,8 +313,8 @@ MAP_LAYOUT = [
     "#..WWWWW........#...#....##...##",
     "#..........#####....######..####",
     "#..SSSSS...#...#....#.......####",
-    "#..S...S...#...#....#.......####",
-    "#..SDH.S...#...######.......####",
+    "#..S...S...#...#....#..T....####",
+    "#..SDH.S...#...######....L..####",
     "#..S...S...#.................###",
     "#..SSSSS...#..GGGGGGGGGGGG...###",
     "#..........#..GGGGGGGGGGGG...###",
@@ -281,6 +333,7 @@ MAP_HEIGHT = len(MAP_LAYOUT)
 MAP_PIXEL_WIDTH = MAP_WIDTH * TILE_SIZE
 MAP_PIXEL_HEIGHT = MAP_HEIGHT * TILE_SIZE
 DEFAULT_START_POSITION = (2, 2)
+TRAINER_TILES = {"T": "forest_bug_catcher_1", "L": "grove_gym_leader"}
 
 TILE_TYPES = {
     "#": {
@@ -345,6 +398,20 @@ TILE_TYPES = {
         "pattern": "planks",
         "base_color": (170, 138, 92),
         "accent_color": (118, 88, 54),
+    },
+    "T": {
+        "walkable": True,
+        "name": "Trainer Spot",
+        "pattern": "path",
+        "base_color": (212, 188, 140),
+        "accent_color": (136, 118, 82),
+    },
+    "L": {
+        "walkable": True,
+        "name": "Leader Arena",
+        "pattern": "path",
+        "base_color": (200, 210, 160),
+        "accent_color": (150, 160, 118),
     },
 }
 
@@ -577,6 +644,8 @@ class BattleState:
         player_party: List[Monster],
         enemy_monster: Monster,
         max_party_size: int,
+        trainer: Optional[Dict[str, object]] = None,
+        enemy_party: Optional[List[Monster]] = None,
     ):
         if not player_party:
             raise ValueError("Player party cannot be empty when a battle begins.")
@@ -584,7 +653,11 @@ class BattleState:
             raise ValueError("All party monsters have fainted and cannot battle.")
 
         self.player_party = player_party
-        self.enemy_monster = enemy_monster
+        self.trainer_info = trainer
+        self.trainer_id = (trainer or {}).get("id")
+        self.enemy_party = enemy_party or [enemy_monster]
+        self.enemy_active_index = 0
+        self.enemy_monster = self.enemy_party[self.enemy_active_index]
         self.max_party_size = max_party_size
 
         preferred_lead = 0
@@ -610,9 +683,14 @@ class BattleState:
         self.pending_enemy_turn = False
         self.after_battle_callback: Optional[Callable[[], None]] = None
         self.ended = False
-        self.action_options: List[str] = ["Fight", "Switch", "Catch", "Run"]
+        if self.trainer_info:
+            self.action_options: List[str] = ["Fight", "Switch", "Run"]
+        else:
+            self.action_options = ["Fight", "Switch", "Catch", "Run"]
         self.captured_monster: Optional[Monster] = None
         self.captured_to_storage = False
+        self.trainer_defeated = False
+        self.badge_earned: Optional[str] = None
 
     @property
     def party_size(self) -> int:
@@ -629,6 +707,18 @@ class BattleState:
         self.active_index = index
         self.player_monster = self.player_party[index]
         self.switch_index = index
+
+    def set_enemy_monster(self, index: int) -> None:
+        self.enemy_active_index = index
+        self.enemy_monster = self.enemy_party[index]
+
+    def next_enemy_index(self) -> Optional[int]:
+        for idx, monster in enumerate(self.enemy_party):
+            if idx <= self.enemy_active_index:
+                continue
+            if not monster.is_fainted():
+                return idx
+        return None
 
     def first_available_switch(self) -> Optional[int]:
         for idx, monster in enumerate(self.player_party):
@@ -670,6 +760,15 @@ def encounter_chance() -> bool:
     return random.random() < 0.1
 
 
+def enemy_label(battle: BattleState, monster: Monster) -> str:
+    """Return a readable label for the opposing monster based on battle type."""
+
+    if getattr(battle, "trainer_info", None):
+        trainer_name = battle.trainer_info.get("name", "Trainer")
+        return f"{trainer_name}'s {monster.name}"
+    return f"Wild {monster.name}"
+
+
 def calculate_damage(attacker: Monster, defender: Monster, move: Move) -> int:
     base = move.power + attacker.attack - int(defender.defense * 0.5)
     base = max(base, 1)
@@ -697,6 +796,42 @@ def start_battle(
         enemy_monster=enemy,
         max_party_size=max_party_size,
     )
+
+
+def start_trainer_battle(
+    trainer_id: str,
+    trainers: Dict[str, Dict[str, object]],
+    monster_templates: Dict[str, Monster],
+    player_party: List[Monster],
+    max_party_size: int,
+) -> Optional[BattleState]:
+    """Start a fixed trainer battle using the trainer's defined team."""
+
+    trainer = trainers.get(trainer_id)
+    if not trainer:
+        return None
+
+    enemy_party: List[Monster] = []
+    for monster_name in trainer.get("team", []):
+        template = monster_templates.get(monster_name)
+        if template:
+            enemy_party.append(clone_monster(template))
+
+    if not enemy_party:
+        return None
+
+    battle = BattleState(
+        player_party=player_party,
+        enemy_monster=enemy_party[0],
+        max_party_size=max_party_size,
+        trainer=trainer,
+        enemy_party=enemy_party,
+    )
+
+    for line in trainer.get("dialogue_before", []):
+        battle.queue_message(f"{trainer['name']}: {line}")
+    battle.queue_message(f"{trainer['name']} sent out {battle.enemy_monster.name}!")
+    return battle
 
 
 # ----------------------------------------------------------------------------
@@ -975,7 +1110,64 @@ def draw_party_menu(
             f"{move.name}  Pow {move.power}  Acc {int(move.accuracy * 100)}%",
             (detail_x, stats_y + 246 + idx * 24),
             small_font,
+    )
+
+
+def starter_selection_screen(
+    screen: pygame.Surface,
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
+    clock: pygame.time.Clock,
+    starter_names: List[str],
+    monster_templates: Dict[str, Monster],
+) -> Optional[str]:
+    """Show a simple starter selection menu and return the chosen monster name."""
+
+    selection = 0
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    selection = (selection - 1) % len(starter_names)
+                elif event.key == pygame.K_DOWN:
+                    selection = (selection + 1) % len(starter_names)
+                elif event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_z):
+                    return starter_names[selection]
+
+        screen.fill((68, 128, 120))
+        panel = pygame.Rect(60, 60, WINDOW_WIDTH - 120, WINDOW_HEIGHT - 120)
+        pygame.draw.rect(screen, (236, 236, 236), panel)
+        pygame.draw.rect(screen, (0, 0, 0), panel, 2)
+        draw_text(screen, "Choose your starter companion!", (panel.x + 20, panel.y + 16), font)
+        draw_text(
+            screen,
+            "Up/Down to browse · Enter to confirm",
+            (panel.x + 20, panel.y + 44),
+            small_font,
         )
+
+        for idx, name in enumerate(starter_names):
+            template = monster_templates.get(name)
+            type_label = template.type if template else "Unknown"
+            stats = (
+                f"HP {template.max_hp} · ATK {template.attack} · DEF {template.defense} · SPD {template.speed}"
+                if template
+                else ""
+            )
+            prefix = "> " if idx == selection else "  "
+            draw_text(
+                screen,
+                f"{prefix}{name} ({type_label})",
+                (panel.x + 24, panel.y + 84 + idx * 60),
+                font,
+            )
+            if stats:
+                draw_text(screen, stats, (panel.x + 44, panel.y + 110 + idx * 60), small_font)
+
+        pygame.display.flip()
+        clock.tick(60)
 
 
 # ----------------------------------------------------------------------------
@@ -1095,15 +1287,43 @@ def execute_player_turn(battle: BattleState, move: Move) -> None:
         if defender.is_fainted():
             exp_gain = calculate_exp_gain(defender)
 
+            def handle_trainer_follow_up() -> None:
+                if not battle.trainer_info:
+                    battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+                    return
+
+                trainer_name = battle.trainer_info.get("name", "Trainer")
+                next_index = battle.next_enemy_index()
+                if next_index is None:
+                    battle.trainer_defeated = True
+                    if battle.trainer_info.get("is_gym_leader") and battle.trainer_info.get("badge_name"):
+                        battle.badge_earned = str(battle.trainer_info.get("badge_name"))
+
+                    def finish_battle() -> None:
+                        battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+
+                    after_dialogue = battle.trainer_info.get("dialogue_after", [])
+                    if after_dialogue:
+                        for idx, line in enumerate(after_dialogue):
+                            callback = finish_battle if idx == len(after_dialogue) - 1 else None
+                            battle.queue_message(f"{trainer_name}: {line}", callback=callback)
+                    else:
+                        finish_battle()
+                else:
+                    battle.set_enemy_monster(next_index)
+                    battle.queue_message(f"{trainer_name} sent out {battle.enemy_monster.name}!")
+
             def award_exp() -> None:
                 level_messages = attacker.gain_experience(exp_gain)
                 for message in level_messages:
                     battle.queue_message(message)
-                battle.after_battle_callback = lambda: setattr(battle, "ended", True)
+                handle_trainer_follow_up()
 
-            battle.queue_message(f"Wild {defender.name} fainted!")
+            battle.queue_message(f"{enemy_label(battle, defender)} fainted!")
             battle.queue_message(f"{attacker.name} gained {exp_gain} EXP!", callback=award_exp)
             battle.pending_enemy_turn = False
+            battle.menu_state = "action"
+            battle.action_index = 0
             return
 
     battle.pending_enemy_turn = True
@@ -1117,11 +1337,11 @@ def execute_enemy_turn(battle: BattleState) -> None:
     move = random.choice(attacker.moves)
 
     if not accuracy_check(move):
-        battle.queue_message(f"Wild {attacker.name}'s {move.name} missed!")
+        battle.queue_message(f"{enemy_label(battle, attacker)}'s {move.name} missed!")
     else:
         damage = calculate_damage(attacker, defender, move)
         defender.current_hp = max(0, defender.current_hp - damage)
-        battle.queue_message(f"Wild {attacker.name} used {move.name}!")
+        battle.queue_message(f"{enemy_label(battle, attacker)} used {move.name}!")
         battle.queue_message(f"It dealt {damage} damage!")
         if defender.is_fainted():
             def handle_faint() -> None:
@@ -1137,6 +1357,13 @@ def execute_enemy_turn(battle: BattleState) -> None:
 
 
 def attempt_capture(battle: BattleState) -> None:
+    if battle.trainer_info:
+        battle.queue_message("You can't capture a trainer's partner!")
+        battle.pending_enemy_turn = True
+        battle.menu_state = "action"
+        battle.action_index = 0
+        return
+
     battle.queue_message("You threw a capture charm!")
 
     enemy = battle.enemy_monster
@@ -1162,6 +1389,10 @@ def attempt_capture(battle: BattleState) -> None:
 
 
 def attempt_escape(battle: BattleState) -> None:
+    if battle.trainer_info:
+        battle.queue_message("The trainer blocks your escape!")
+        battle.pending_enemy_turn = True
+        return
     if random.random() < 0.5:
         battle.queue_message("Got away safely!", callback=lambda: setattr(battle, "ended", True))
     else:
@@ -1184,15 +1415,28 @@ def main() -> None:
     tile_surfaces = build_tile_surfaces(TILE_TYPES, TILE_SIZE)
     player_sprite = create_player_sprite(TILE_SIZE)
 
-    move_library = create_move_library()
-    monster_templates = create_monster_templates(move_library)
+    move_library, monster_templates = load_monster_definitions()
+    trainers = load_trainers()
     template_list = list(monster_templates.values())
-    default_party = [clone_monster(monster) for monster in template_list[:3]]
+    starter_names = ["Flarekit", "Dripfin", "Spriglet"]
+
+    default_party: List[Monster] = []
+    if not SAVE_FILE.exists():
+        chosen = starter_selection_screen(
+            screen, font, small_font, clock, starter_names, monster_templates
+        )
+        if chosen and chosen in monster_templates:
+            default_party = [clone_monster(monster_templates[chosen])]
+
+    if not default_party:
+        default_party = [clone_monster(monster) for monster in template_list[:3]]
     if not default_party:
         raise ValueError("No monsters defined in monsters.json. Add at least one monster entry.")
-    player_position, player_party, player_storage = load_game_state(
+    player_position, player_party, player_storage, badges, defeated_trainers = load_game_state(
         SAVE_FILE, monster_templates, default_party, DEFAULT_START_POSITION
     )
+    earned_badges: Set[str] = set(badges)
+    defeated_trainers_set: Set[str] = set(defeated_trainers)
     player_party = player_party[:MAX_PARTY_SIZE]
     player_storage = list(player_storage)
     if not player_party:
@@ -1210,7 +1454,7 @@ def main() -> None:
     party_reorder_source: Optional[int] = None
 
     def end_battle() -> None:
-        nonlocal game_mode, active_battle, overworld_message, overworld_message_timer, player_storage
+        nonlocal game_mode, active_battle, overworld_message, overworld_message_timer, player_storage, earned_badges, defeated_trainers_set
         if not active_battle:
             return
         if all(monster.is_fainted() for monster in player_party):
@@ -1231,6 +1475,19 @@ def main() -> None:
                 player_storage.append(captured)
                 overworld_message = f"{captured.name} was sent to storage!"
             overworld_message_timer = 240
+
+        if active_battle.trainer_defeated and active_battle.trainer_id:
+            defeated_trainers_set.add(active_battle.trainer_id)
+            trainer_name = None
+            if active_battle.trainer_info:
+                trainer_name = active_battle.trainer_info.get("name")
+            if active_battle.badge_earned:
+                earned_badges.add(active_battle.badge_earned)
+                overworld_message = f"You received the {active_battle.badge_earned}!"
+                overworld_message_timer = 240
+            elif trainer_name:
+                overworld_message = f"{trainer_name} was defeated!"
+                overworld_message_timer = 180
         game_mode = "overworld"
         active_battle = None
 
@@ -1241,7 +1498,14 @@ def main() -> None:
                 running = False
             elif game_mode == "overworld" and event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_s:
-                    save_game_state(SAVE_FILE, player, player_party, player_storage)
+                    save_game_state(
+                        SAVE_FILE,
+                        player,
+                        player_party,
+                        player_storage,
+                        list(earned_badges),
+                        list(defeated_trainers_set),
+                    )
                     overworld_message = "Game saved!"
                     overworld_message_timer = 180
                     continue
@@ -1278,6 +1542,23 @@ def main() -> None:
                                 monster.heal()
                             overworld_message = "Your party was restored at the roadside house!"
                             overworld_message_timer = 180
+                        trainer_id = TRAINER_TILES.get(tile_symbol)
+                        if (
+                            trainer_id
+                            and trainer_id in trainers
+                            and trainer_id not in defeated_trainers_set
+                        ):
+                            battle = start_trainer_battle(
+                                trainer_id, trainers, monster_templates, player_party, MAX_PARTY_SIZE
+                            )
+                            if battle:
+                                game_mode = "battle"
+                                active_battle = battle
+                                overworld_message = None
+                                continue
+                            else:
+                                overworld_message = "Trainer data missing."
+                                overworld_message_timer = 180
                         if tile_symbol == "G" and encounter_chance():
                             game_mode = "battle"
                             active_battle = start_battle(
@@ -1296,7 +1577,14 @@ def main() -> None:
                     else:
                         game_mode = "overworld"
                 elif event.key == pygame.K_s:
-                    save_game_state(SAVE_FILE, player, player_party, player_storage)
+                    save_game_state(
+                        SAVE_FILE,
+                        player,
+                        player_party,
+                        player_storage,
+                        list(earned_badges),
+                        list(defeated_trainers_set),
+                    )
                     overworld_message = "Game saved!"
                     overworld_message_timer = 180
                 elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
