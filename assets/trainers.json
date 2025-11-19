@@ -1,0 +1,22 @@
+{
+  "_comment": "Add new trainers by appending entries to the 'trainers' array. Each trainer should have an id, display name, dialogue, and a team of monster names.",
+  "trainers": [
+    {
+      "id": "forest_bug_catcher_1",
+      "name": "Bug Catcher Tom",
+      "is_gym_leader": false,
+      "dialogue_before": ["I love tiny monsters.", "Get ready for a real scuffle."],
+      "dialogue_after": ["Whoa, you are strong."],
+      "team": ["Budling", "Spraygit"]
+    },
+    {
+      "id": "grove_gym_leader",
+      "name": "Ranger Liora",
+      "is_gym_leader": true,
+      "badge_name": "Leaf Badge",
+      "dialogue_before": ["Welcome to the grove's trial.", "Show me your bond with your team!"],
+      "dialogue_after": ["You earned the Leaf Badge!", "Nurture your partners well."],
+      "team": ["Spriglet", "Budling", "Momo"]
+    }
+  ]
+}
