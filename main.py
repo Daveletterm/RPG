@@ -843,9 +843,6 @@ def draw_text(surface: pygame.Surface, text: str, position: tuple[int, int], fon
     rendered = font.render(text, True, color)
     surface.blit(rendered, position)
 
-    player_center_x = player.tile_x * TILE_SIZE + TILE_SIZE // 2
-    player_center_y = player.tile_y * TILE_SIZE + TILE_SIZE // 2
-
 def draw_overworld(
     screen: pygame.Surface,
     player: Player,
