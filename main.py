@@ -82,9 +82,9 @@ MAX_PARTY_SIZE = 6
 def create_move_library() -> Dict[str, Move]:
     """Return the core move definitions. Extend this to add new moves."""
     return {
-        "Cinder Snap": Move("Cinder Snap", power=18, accuracy=0.95, type="ember"),
-        "Leaf Gust": Move("Leaf Gust", power=16, accuracy=0.9, type="flora"),
-        "Ripple Shot": Move("Ripple Shot", power=20, accuracy=0.85, type="aqua"),
+        "Cinder Snap": Move("Cinder Snap", power=18, accuracy=0.95, type="fire"),
+        "Leaf Gust": Move("Leaf Gust", power=16, accuracy=0.9, type="grass"),
+        "Ripple Shot": Move("Ripple Shot", power=20, accuracy=0.85, type="water"),
         "Nuzzle": Move("Nuzzle", power=10, accuracy=1.0, type="normal"),
     }
 

@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Add new monsters by appending entries to the 'monsters' array below.",
-    "Each monster needs: name, level, max_hp, attack, defense, speed, and type (e.g. ember/aqua/flora/normal).",
+    "Each monster needs: name, level, max_hp, attack, defense, speed, and type (e.g. fire/water/grass/normal/evil/flying/metal/toxic).",
     "List the monster's moves by name; move stats live in Python's create_move_library().",
     "Sprites live in assets/sprites/ and are referenced by filename under sprites.front and sprites.back.",
     "Back sprites are optional; if omitted the front sprite will be reused."
@@ -14,7 +14,7 @@
       "attack": 11,
       "defense": 9,
       "speed": 11,
-      "type": "aqua",
+      "type": "water",
       "moves": ["Ripple Shot", "Nuzzle"],
       "sprites": {
         "front": "spraygit_front.png",
@@ -28,7 +28,7 @@
       "attack": 14,
       "defense": 8,
       "speed": 13,
-      "type": "ember",
+      "type": "fire",
       "moves": ["Cinder Snap", "Nuzzle"],
       "sprites": {
         "front": "lokain_front.png"
@@ -41,7 +41,7 @@
       "attack": 10,
       "defense": 12,
       "speed": 10,
-      "type": "flora",
+      "type": "grass",
       "moves": ["Leaf Gust", "Nuzzle"],
       "sprites": {
         "front": "momo_front.png"
@@ -54,7 +54,7 @@
       "attack": 12,
       "defense": 9,
       "speed": 14,
-      "type": "ember",
+      "type": "fire",
       "moves": ["Cinder Snap", "Nuzzle"],
       "sprites": {
         "front": "loki_front.png"
@@ -67,7 +67,7 @@
       "attack": 12,
       "defense": 8,
       "speed": 10,
-      "type": "ember",
+      "type": "fire",
       "moves": ["Cinder Snap", "Nuzzle"]
     },
     {
@@ -77,7 +77,7 @@
       "attack": 11,
       "defense": 9,
       "speed": 9,
-      "type": "aqua",
+      "type": "water",
       "moves": ["Ripple Shot", "Nuzzle"]
     },
     {
@@ -87,7 +87,7 @@
       "attack": 10,
       "defense": 11,
       "speed": 8,
-      "type": "flora",
+      "type": "grass",
       "moves": ["Leaf Gust", "Nuzzle"]
     },
     {
@@ -97,7 +97,7 @@
       "attack": 13,
       "defense": 9,
       "speed": 11,
-      "type": "ember",
+      "type": "fire",
       "moves": ["Cinder Snap", "Nuzzle"],
       "sprites": {
         "front": "flarekit_front.png",
@@ -111,7 +111,7 @@
       "attack": 11,
       "defense": 10,
       "speed": 10,
-      "type": "aqua",
+      "type": "water",
       "moves": ["Ripple Shot", "Nuzzle"],
       "sprites": {
         "front": "dripfin_front.png",
@@ -125,7 +125,7 @@
       "attack": 10,
       "defense": 12,
       "speed": 9,
-      "type": "flora",
+      "type": "grass",
       "moves": ["Leaf Gust", "Nuzzle"],
       "sprites": {
         "front": "spriglet_front.png",
