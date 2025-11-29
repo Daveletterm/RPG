@@ -131,6 +131,32 @@
         "front": "spriglet_front.png",
         "back": "spriglet_back.png"
       }
+    },
+    {
+      "name": "Frostdrake",
+      "level": 7,
+      "max_hp": 36,
+      "attack": 15,
+      "defense": 13,
+      "speed": 12,
+      "type": "ice",
+      "moves": ["Glacier Spit", "Aerial Rake", "Nuzzle"],
+      "sprites": {
+        "front": "frostdrake_front.png"
+      }
+    },
+    {
+      "name": "Shadowlynx",
+      "level": 6,
+      "max_hp": 34,
+      "attack": 14,
+      "defense": 11,
+      "speed": 13,
+      "type": "dark",
+      "moves": ["Shadow Swipe", "Night Pounce", "Nuzzle"],
+      "sprites": {
+        "front": "shadowlynx_front.png"
+      }
     }
   ]
 }

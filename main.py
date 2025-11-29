@@ -86,6 +86,10 @@ def create_move_library() -> Dict[str, Move]:
         "Leaf Gust": Move("Leaf Gust", power=16, accuracy=0.9, type="grass"),
         "Ripple Shot": Move("Ripple Shot", power=20, accuracy=0.85, type="water"),
         "Nuzzle": Move("Nuzzle", power=10, accuracy=1.0, type="normal"),
+        "Glacier Spit": Move("Glacier Spit", power=22, accuracy=0.85, type="ice"),
+        "Aerial Rake": Move("Aerial Rake", power=19, accuracy=0.9, type="flying"),
+        "Shadow Swipe": Move("Shadow Swipe", power=17, accuracy=0.95, type="dark"),
+        "Night Pounce": Move("Night Pounce", power=14, accuracy=1.0, type="dark"),
     }
 
 
@@ -1006,7 +1010,7 @@ def draw_party_menu(
     if view == "party":
         if reorder_source is None:
             hint = (
-                "UP/DOWN to inspect · ENTER to reorder · LEFT/RIGHT to change view · TAB/P to close · S to save"
+                "UP/DOWN to inspect · ENTER to reorder · D to send to storage · LEFT/RIGHT to change view · TAB/P to close · S to save"
             )
         else:
             hint = (
@@ -1014,7 +1018,7 @@ def draw_party_menu(
             )
     else:
         hint = (
-            "UP/DOWN to inspect · LEFT/RIGHT to change view · TAB/P to close · S to save"
+            "UP/DOWN to inspect · W to withdraw to party · LEFT/RIGHT to change view · TAB/P to close · S to save"
         )
 
     draw_text(screen, hint, (panel_rect.x + 20, panel_rect.y + 46), small_font)
@@ -1602,6 +1606,30 @@ def main() -> None:
                         party_selection = (party_selection + 1) % len(player_party)
                     elif party_menu_view == "storage" and player_storage:
                         storage_selection = (storage_selection + 1) % len(player_storage)
+                elif event.key == pygame.K_d and party_menu_view == "party" and player_party:
+                    if len(player_party) <= 1:
+                        overworld_message = "You need at least one monster in your party."
+                        overworld_message_timer = 180
+                    else:
+                        monster = player_party.pop(party_selection)
+                        player_storage.append(monster)
+                        party_selection = max(0, min(party_selection, len(player_party) - 1))
+                        party_reorder_source = None
+                        overworld_message = f"{monster.name} was sent to storage."
+                        overworld_message_timer = 180
+                elif event.key == pygame.K_w and party_menu_view == "storage" and player_storage:
+                    if len(player_party) >= MAX_PARTY_SIZE:
+                        overworld_message = "Party is full. Release a slot first."
+                        overworld_message_timer = 180
+                    else:
+                        monster = player_storage.pop(storage_selection)
+                        player_party.append(monster)
+                        if player_storage:
+                            storage_selection = max(0, min(storage_selection, len(player_storage) - 1))
+                        else:
+                            storage_selection = 0
+                        overworld_message = f"{monster.name} joined your party."
+                        overworld_message_timer = 180
                 elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
                     if party_menu_view == "party" and player_party:
                         if party_reorder_source is None:
